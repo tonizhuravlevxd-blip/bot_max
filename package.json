@@ -7,7 +7,7 @@
     "start": "node app.js"
   },
   "dependencies": {
-    "@maxhub/max-bot-api": "https://github.com/max-messenger/max-bot-api-client-ts",  // Используем HTTPS
+    "@maxhub/max-bot-api": "https://github.com/max-messenger/max-bot-api-client-ts", 
     "axios": "^0.24.0", 
     "dotenv": "^10.0.0", 
     "express": "^4.17.1"
