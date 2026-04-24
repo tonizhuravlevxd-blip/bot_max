@@ -1,0 +1,17 @@
+{
+  "name": "openai-bot", 
+  "version": "1.0.0", 
+  "description": "A bot to interact with OpenAI API", 
+  "main": "app.js", 
+  "scripts": {
+    "start": "node app.js"
+  },
+  "dependencies": {
+    "axios": "^0.24.0", 
+    "dotenv": "^10.0.0", 
+    "express": "^4.17.1"
+  },
+  "engines": {
+    "node": "16.x"
+  }
+}
