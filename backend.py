@@ -9,6 +9,7 @@ app = FastAPI()
 
 # ===== CONFIG =====
 WORKER_URL = os.getenv("WORKER_URL")  # URL воркера
+MAX_API_KEY = os.getenv("MAX_API_KEY")  # API ключ MAX бота
 MAX_QUEUE = 300
 
 # ===== STORAGE =====
@@ -22,7 +23,6 @@ class ActionRequest(BaseModel):
     action: str | None = None
     text: str | None = None
 
-
 # ===== USER =====
 def get_user(user_id):
     if user_id not in USERS:
@@ -31,7 +31,6 @@ def get_user(user_id):
             "last_prompt": None,
         }
     return USERS[user_id]
-
 
 # ===== UTILS =====
 def check_rate_limit(user_id):
@@ -43,7 +42,6 @@ def check_rate_limit(user_id):
 
     LAST_REQUEST_TIME[user_id] = now
     return True
-
 
 # ===== ACTION =====
 @app.post("/action")
@@ -66,10 +64,9 @@ async def action(req: ActionRequest):
         if not user["last_prompt"]:
             return {"text": "⚠️ Нет данных"}
 
-        return await send_to_worker(req.user_id, user["last_prompt"], user["mode"])
+        return await send_to_max(req.user_id, user["last_prompt"], user["mode"])
 
     return {"text": "❓ Неизвестное действие"}
-
 
 # ===== MESSAGE =====
 @app.post("/message")
@@ -94,22 +91,30 @@ async def message(req: ActionRequest):
 
     user["last_prompt"] = req.text
 
-    return await send_to_worker(req.user_id, req.text, user["mode"])
+    return await send_to_max(req.user_id, req.text, user["mode"])
 
-
-# ===== SEND TO WORKER =====
-async def send_to_worker(user_id, prompt, mode):
+# ===== SEND TO MAX =====
+async def send_to_max(user_id, prompt, mode):
     active_generations.add(user_id)
 
+    headers = {
+        "Authorization": f"Bearer {MAX_API_KEY}",  # Используем API ключ для авторизации
+        "Content-Type": "application/json"
+    }
+
+    data = {
+        "user_id": user_id,
+        "prompt": prompt,
+        "mode": mode
+    }
+
     async with httpx.AsyncClient() as client:
-        await client.post(f"{WORKER_URL}/generate", json={
-            "user_id": user_id,
-            "prompt": prompt,
-            "mode": mode
-        })
+        response = await client.post(f"https://api.maxbot.com/generate", json=data, headers=headers)
 
-    return {"text": "⏳ Генерация запущена..."}
-
+        if response.status_code == 200:
+            return {"text": "⏳ Генерация запущена..."}
+        else:
+            return {"text": "❌ Ошибка при генерации"}
 
 # ===== RESULT FROM WORKER =====
 @app.post("/result")
@@ -120,10 +125,9 @@ async def result(data: dict):
 
     print(f"✅ RESULT for {user_id}: {data}")
 
-    # 👉 тут потом отправка обратно в MAX
+    # 👉 здесь вы можете отправить результат обратно в MAX, если это нужно
 
     return {"status": "ok"}
-
 
 @app.get("/")
 async def root():
