@@ -7,12 +7,12 @@
     "start": "node app.js"
   },
   "dependencies": {
-    "@maxhub/max-bot-api": "^1.0.0", 
+    "@maxhub/max-bot-api": "git+https://github.com/maxhub/max-bot-api.git", 
     "axios": "^0.24.0", 
     "dotenv": "^10.0.0", 
     "express": "^4.17.1"
   },
   "engines": {
-    "node": "16.x"
+    "node": "18.x"
   }
 }
