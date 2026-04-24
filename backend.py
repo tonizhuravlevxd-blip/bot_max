@@ -1,29 +1,28 @@
-import asyncio
 import time
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import httpx
 import os
 
+# Инициализация FastAPI приложения
 app = FastAPI()
 
-# ===== CONFIG =====
-WORKER_URL = os.getenv("WORKER_URL")  # URL воркера
-MAX_API_KEY = os.getenv("MAX_API_KEY")  # API ключ MAX бота
-MAX_QUEUE = 300
+# Переменные окружения для OpenAI API
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+BACKEND_URL = os.getenv("BACKEND_URL")  # URL для отправки результатов обратно
 
-# ===== STORAGE =====
+# Хранение состояния пользователей и запросов
 USERS = {}
 active_generations = set()
 LAST_REQUEST_TIME = {}
 
-# ===== MODEL =====
+# Модели запросов от пользователей
 class ActionRequest(BaseModel):
     user_id: int
     action: str | None = None
     text: str | None = None
 
-# ===== USER =====
+# Функция для получения пользователя
 def get_user(user_id):
     if user_id not in USERS:
         USERS[user_id] = {
@@ -32,43 +31,63 @@ def get_user(user_id):
         }
     return USERS[user_id]
 
-# ===== UTILS =====
+# Проверка лимита запросов
 def check_rate_limit(user_id):
     now = time.time()
     last = LAST_REQUEST_TIME.get(user_id, 0)
-
     if now - last < 2:
         return False
-
     LAST_REQUEST_TIME[user_id] = now
     return True
 
-# ===== ACTION =====
-@app.post("/action")
-async def action(req: ActionRequest):
-    user = get_user(req.user_id)
+# Обработка запроса на создание изображения через OpenAI (DALL·E)
+async def generate_image(prompt: str):
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    
+    data = {
+        "model": "dall-e-2",  # Модель DALL·E для генерации изображений
+        "prompt": prompt,
+        "num_images": 1,
+        "size": "1024x1024"  # Можно уменьшить размер для более дешевой генерации
+    }
 
-    if req.action == "photo":
-        user["mode"] = "image"
-        return {"text": "🖼 Режим изображения\nНапиши текст"}
+    async with httpx.AsyncClient() as client:
+        response = await client.post("https://api.openai.com/v1/images/generations", json=data, headers=headers)
 
-    if req.action == "video":
-        user["mode"] = "video"
-        return {"text": "🎬 Режим видео\nНапиши текст"}
+    if response.status_code == 200:
+        result = response.json()
+        image_url = result["data"][0]["url"]
+        return f"Готово! Вот ваше изображение: {image_url}"
+    else:
+        return f"❌ Ошибка при генерации изображения: {response.status_code}, {response.text}"
 
-    if req.action == "music":
-        user["mode"] = "music"
-        return {"text": "🎵 Напиши текст песни"}
+# Обработка запроса к более дешевой модели ChatGPT (gpt-3.5-turbo)
+async def chat_with_gpt(prompt: str):
+    headers = {
+        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-    if req.action == "repeat":
-        if not user["last_prompt"]:
-            return {"text": "⚠️ Нет данных"}
+    data = {
+        "model": "gpt-3.5-turbo",  # Используем более дешевую модель
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 100
+    }
 
-        return await send_to_max(req.user_id, user["last_prompt"], user["mode"])
+    async with httpx.AsyncClient() as client:
+        response = await client.post("https://api.openai.com/v1/chat/completions", json=data, headers=headers)
 
-    return {"text": "❓ Неизвестное действие"}
+    if response.status_code == 200:
+        result = response.json()
+        text = result["choices"][0]["message"]["content"].strip()
+        return f"Ответ от ChatGPT: {text}"
+    else:
+        return f"❌ Ошибка при общении с ChatGPT: {response.status_code}, {response.text}"
 
-# ===== MESSAGE =====
+# Главный POST запрос для приема сообщений от пользователя
 @app.post("/message")
 async def message(req: ActionRequest):
     user = get_user(req.user_id)
@@ -76,70 +95,31 @@ async def message(req: ActionRequest):
     # Логирование входящего текста
     print(f"Получено сообщение от пользователя {req.user_id}: {req.text}")
 
-    # Проверяем на приветственное сообщение
-    if req.text and ("привет" in req.text.lower() or "hello" in req.text.lower()):
-        return {
-            "text": "Привет! Я могу помочь тебе с созданием фото с NanoBanana2 бесплатно или помочь тебе как психолог с ChatGPT4 бесплатно.\n\nВыбери одну из опций:",
-            "buttons": [
-                {"text": "🖼 Создать фото с NanoBanana2", "action": "photo"},
-                {"text": "🧠 Психолог с ChatGPT4", "action": "music"}
-            ]
-        }
+    # Проверяем, если текст содержит слово "фото", то генерируем картинку
+    if req.text and ("фото" in req.text.lower() or "image" in req.text.lower()):
+        result = await generate_image(req.text)  # Генерация изображения
+    else:
+        result = await chat_with_gpt(req.text)  # Обработка запроса через ChatGPT
 
-    if not user["mode"]:
-        return {
-            "text": "⚠️ Выбери режим",
-            "buttons": [
-                {"text": "🖼 Фото", "action": "photo"},
-                {"text": "🎬 Видео", "action": "video"},
-                {"text": "🎵 Музыка", "action": "music"},
-            ]
-        }
-
-    if not check_rate_limit(req.user_id):
-        return {"text": "⏳ Подожди"}
-
-    if req.user_id in active_generations:
-        return {"text": "⏳ Уже генерируется"}
-
-    user["last_prompt"] = req.text
-
-    return await send_to_max(req.user_id, req.text, user["mode"])
-
-# ===== SEND TO MAX =====
-async def send_to_max(user_id, prompt, mode):
-    active_generations.add(user_id)
-
-    headers = {
-        "Authorization": f"Bearer {MAX_API_KEY}",  # Используем API ключ для авторизации
-        "Content-Type": "application/json"
-    }
-
-    data = {
-        "user_id": user_id,
-        "prompt": prompt,
-        "mode": mode
-    }
-
+    # Отправка результата обратно в бэкенд
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"{WORKER_URL}/generate", json=data, headers=headers)
+        response = await client.post(f"{BACKEND_URL}/result", json={
+            "user_id": req.user_id,
+            "result": result
+        })
 
-        if response.status_code == 200:
-            return {"text": "⏳ Генерация запущена..."}
-        else:
-            return {"text": "❌ Ошибка при генерации"}
-
-# ===== RESULT FROM WORKER =====
-@app.post("/result")
-async def result(data: dict):
-    user_id = data["user_id"]
-
-    active_generations.discard(user_id)
-
-    print(f"✅ RESULT for {user_id}: {data}")
-
+    if response.status_code != 200:
+        raise HTTPException(status_code=500, detail="Ошибка при отправке результата")
+    
     return {"status": "ok"}
 
+# Эндпоинт для получения результата после обработки (для воркера)
+@app.post("/result")
+async def result(data: dict):
+    print(f"✅ Результат для пользователя {data['user_id']}: {data['result']}")
+    return {"status": "ok"}
+
+# Главная страница
 @app.get("/")
 async def root():
     return {"status": "backend ok"}
