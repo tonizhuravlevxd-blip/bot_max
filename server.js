@@ -43,19 +43,13 @@ function splitForMax(text, maxLength = 3900) {
 
 async function maxRequest(path, options = {}) {
   const url = new URL(`${MAX_API_BASE}${path}`);
-  url.searchParams.set("access_token", MAX_BOT_TOKEN);
-
-  if (options.query) {
-    for (const [key, value] of Object.entries(options.query)) {
-      if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
-    }
-  }
-
+  
+  // Убираем параметр access_token, так как его больше не следует использовать.
   const response = await fetch(url, {
     method: options.method || "GET",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${MAX_BOT_TOKEN}`
+      "Authorization": `Bearer ${MAX_BOT_TOKEN}`  // Передаем токен через Authorization
     },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
@@ -130,12 +124,14 @@ async function createImageOpenAI(prompt) {
 }
 
 async function askOpenAI(userText) {
+  // Если запрос пользователя связан с созданием изображения, используем OpenAI для этого
   if (userText.toLowerCase().includes("создать изображение") || userText.toLowerCase().includes("сгенерировать фото")) {
     const prompt = userText.replace(/создать изображение|сгенерировать фото/i, "").trim();
     const imageUrl = await createImageOpenAI(prompt);
     return `Вот изображение, которое я создал по вашему запросу: ${imageUrl}`;
   }
 
+  // Обычный текстовый запрос
   const response = await fetch(`${OPENAI_API_BASE}/responses`, {
     method: "POST",
     headers: {
