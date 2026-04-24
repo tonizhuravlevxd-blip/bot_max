@@ -73,6 +73,9 @@ async def action(req: ActionRequest):
 async def message(req: ActionRequest):
     user = get_user(req.user_id)
 
+    # Логирование входящего текста
+    print(f"Получено сообщение от пользователя {req.user_id}: {req.text}")
+
     # Проверяем на приветственное сообщение
     if req.text and ("привет" in req.text.lower() or "hello" in req.text.lower()):
         return {
@@ -134,8 +137,6 @@ async def result(data: dict):
     active_generations.discard(user_id)
 
     print(f"✅ RESULT for {user_id}: {data}")
-
-    # 👉 здесь вы можете отправить результат обратно в MAX, если это нужно
 
     return {"status": "ok"}
 
