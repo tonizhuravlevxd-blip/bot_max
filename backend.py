@@ -109,7 +109,7 @@ async def send_to_max(user_id, prompt, mode):
     }
 
     async with httpx.AsyncClient() as client:
-        response = await client.post(f"https://api.maxbot.com/generate", json=data, headers=headers)
+        response = await client.post(f"{WORKER_URL}/generate", json=data, headers=headers)
 
         if response.status_code == 200:
             return {"text": "⏳ Генерация запущена..."}
