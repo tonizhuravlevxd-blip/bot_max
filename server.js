@@ -55,7 +55,7 @@ async function maxRequest(path, options = {}) {
     method: options.method || "GET",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": MAX_BOT_TOKEN
+      "Authorization": `Bearer ${MAX_BOT_TOKEN}`
     },
     body: options.body ? JSON.stringify(options.body) : undefined
   });
@@ -106,7 +106,36 @@ function extractOpenAIText(data) {
   return parts.join("\n").trim();
 }
 
+// Функция для создания изображений через OpenAI
+async function createImageOpenAI(prompt) {
+  const response = await fetch(`${OPENAI_API_BASE}/images/generations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      prompt: prompt,
+      n: 1, // Количество изображений
+      size: "1024x1024" // Размер изображения
+    })
+  });
+
+  const data = await response.json();
+  if (!response.ok) {
+    throw new Error(`OpenAI Image API ${response.status}: ${JSON.stringify(data)}`);
+  }
+
+  return data.data[0].url; // Возвращаем URL изображения
+}
+
 async function askOpenAI(userText) {
+  if (userText.toLowerCase().includes("создать изображение") || userText.toLowerCase().includes("сгенерировать фото")) {
+    const prompt = userText.replace(/создать изображение|сгенерировать фото/i, "").trim();
+    const imageUrl = await createImageOpenAI(prompt);
+    return `Вот изображение, которое я создал по вашему запросу: ${imageUrl}`;
+  }
+
   const response = await fetch(`${OPENAI_API_BASE}/responses`, {
     method: "POST",
     headers: {
@@ -148,7 +177,7 @@ async function handleUpdate(update) {
   }
 
   if (updateType === "bot_started") {
-    await sendMaxMessage(target, "Здравствуйте. Напишите вопрос, и я отвечу через OpenAI.");
+    await sendMaxMessage(target, "Напишите вопрос, и я отвечу через ChatGPT. Или ваш промт с фото");
     return;
   }
 
