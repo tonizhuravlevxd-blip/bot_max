@@ -2,11 +2,20 @@ import os
 import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-from maxapi import MaxAPI
+
+# Попробуем импортировать MaxAPI правильно
+try:
+    from maxapi import MaxAPI
+except ImportError:
+    # Если не удалось импортировать, можем попробовать импортировать его из другого места
+    raise ImportError("Не удалось импортировать MaxAPI из maxapi.")
 
 # Получаем переменные окружения
 MAX_BOT_TOKEN = os.getenv("MAX_BOT_TOKEN")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+
+if not MAX_BOT_TOKEN or not OPENAI_API_KEY:
+    raise EnvironmentError("Отсутствуют обязательные переменные окружения: MAX_BOT_TOKEN или OPENAI_API_KEY")
 
 # Создаем экземпляр FastAPI
 app = FastAPI()
