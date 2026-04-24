@@ -73,6 +73,16 @@ async def action(req: ActionRequest):
 async def message(req: ActionRequest):
     user = get_user(req.user_id)
 
+    # Проверяем на приветственное сообщение
+    if req.text and ("привет" in req.text.lower() or "hello" in req.text.lower()):
+        return {
+            "text": "Привет! Я могу помочь тебе с созданием фото с NanoBanana2 бесплатно или помочь тебе как психолог с ChatGPT4 бесплатно.\n\nВыбери одну из опций:",
+            "buttons": [
+                {"text": "🖼 Создать фото с NanoBanana2", "action": "photo"},
+                {"text": "🧠 Психолог с ChatGPT4", "action": "music"}
+            ]
+        }
+
     if not user["mode"]:
         return {
             "text": "⚠️ Выбери режим",
