@@ -15,6 +15,7 @@ from maxapi.types import (
 from maxapi.enums.intent import Intent
 from maxapi.enums.parse_mode import ParseMode
 import httpx
+from fastapi import FastAPI
 
 # Загружаем конфигурацию
 load_dotenv()
@@ -37,7 +38,10 @@ if not BOT_TOKEN or not OPENAI_API_KEY:
     logger.error("MAX_BOT_TOKEN или OPENAI_API_KEY не найден в .env")
     exit(1)
 
-# Инициализация
+# Инициализация FastAPI приложения
+app = FastAPI()
+
+# Инициализация бота
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -50,7 +54,6 @@ class UserState(Enum):
     TEXT_MODE = "text"
 
 user_states: Dict[int, UserState] = {}
-
 
 # ==================== ХРАНИЛИЩЕ ====================
 
@@ -293,6 +296,11 @@ async def main():
     logger.info("Бот запущен")
     await dp.start_polling(bot)
 
+
+# Экспорт FastAPI приложения
+@app.get("/")
+async def root():
+    return {"status": "bot is running"}
 
 if __name__ == "__main__":
     asyncio.run(main())
