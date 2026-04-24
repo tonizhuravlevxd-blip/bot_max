@@ -1,12 +1,13 @@
 {
-  "name": "openai-bot", 
+  "name": "openai-max-bot", 
   "version": "1.0.0", 
-  "description": "A bot to interact with OpenAI API", 
-  "main": "app.js", 
+  "description": "A bot to interact with OpenAI API and MAX Bot API", 
+  "main": "bot.js", 
   "scripts": {
-    "start": "node app.js"
+    "start": "node bot.js"
   },
   "dependencies": {
+    "@maxhub/max-bot-api": "^1.0.0", 
     "axios": "^0.24.0", 
     "dotenv": "^10.0.0", 
     "express": "^4.17.1"
