@@ -611,7 +611,7 @@ function safeUserError(error) {
 }
 
 async function handleImageRequest(update, target, userText, incomingImageUrl) {
-  const prompt = cleanImagePrompt(userText) || userText.trim();
+  const prompt = userText.trim();
 
   if (!prompt) {
     await sendMaxMessage(
