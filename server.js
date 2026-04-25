@@ -722,7 +722,14 @@ async function handleUpdate(update) {
 
     // Если текст пустой или спам, игнорируем запрос
     if (userText.includes("spam")) {
-      await notifyUser(userId, "Вы спамите. Пожалуйста, подождите немного.");
+      await sendMaxMessage(target, "Вы спамите. Пожалуйста, подождите немного.");
+      return;
+    }
+
+    // Спам: Превышение лимита запросов
+    if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
+      console.warn(`Spam detected: User ${userId} exceeded the rate limit.`);
+      await sendMaxMessage(target, "Вы спамите. Пожалуйста, подождите немного.");
       return;
     }
 
