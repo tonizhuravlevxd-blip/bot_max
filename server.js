@@ -1,5 +1,7 @@
 import express from "express";
-const fs = require('fs');
+// Заменить require на import
+import fs from 'fs';  // Используем import для fs
+
 const path = '/var/data';
 
 const app = express();
