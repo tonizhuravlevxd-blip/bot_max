@@ -3,47 +3,6 @@ import express from "express";
 import fs from 'fs';  // Используем import для fs
 
 const path = '/var/data';
-console.log('Checking directory path:', path);
-
-try {
-  // Проверяем, существует ли директория для хранения данных, если нет - создаем
-  console.log('Checking if directory exists...');
-  if (!fs.existsSync(path)) {
-    console.log('Directory does not exist. Creating directory...');
-    fs.mkdirSync(path, { recursive: true });
-    console.log('Directory created successfully.');
-  } else {
-    console.log('Directory already exists.');
-  }
-} catch (err) {
-  // Логируем ошибку при проверке или создании директории
-  console.error('Error accessing directory:', err);
-  // Можно отправить ошибку или завершить приложение в случае критической ошибки
-}
-
-// Пример записи в файл с логированием ошибок:
-const filePath = path + '/userData.json';
-
-try {
-  // Пытаемся записать данные в файл
-  const userData = { name: "Test", age: 30 };  // Пример данных для записи
-  console.log('Writing data to file:', filePath);
-  fs.writeFileSync(filePath, JSON.stringify(userData));
-  console.log('Data written to file successfully.');
-} catch (err) {
-  // Логируем ошибку при записи в файл
-  console.error('Error writing data to file:', err);
-}
-
-// Пример чтения из файла с логированием ошибок:
-try {
-  console.log('Reading data from file:', filePath);
-  const fileData = fs.readFileSync(filePath, 'utf-8');
-  console.log('File data:', JSON.parse(fileData));  // Логируем содержимое файла
-} catch (err) {
-  // Логируем ошибку при чтении из файла
-  console.error('Error reading from file:', err);
-}
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -106,7 +65,7 @@ const connectionString = process.env.DATABASE_URL;
 
 if (!connectionString) {
   console.error('DATABASE_URL is not set in environment variables!');
-  process.exit(1);
+  process.exit(1);  // Завершаем приложение, если переменная не найдена
 }
 
 // Настройки подключения к базе данных PostgreSQL
@@ -117,12 +76,30 @@ const client = new Client({
   },
 });
 
+// Логирование процесса подключения
+console.log('Attempting to connect to PostgreSQL...');
+
 client.connect()  // Подключаемся к базе данных
-  .then(() => console.log('Connected to PostgreSQL!'))
+  .then(() => {
+    console.log('Connected to PostgreSQL!');
+    // Логируем успешное подключение
+  })
   .catch((err) => {
-    console.error('Connection error', err.stack);
+    console.error('Connection error:', err.stack);
+    // Логируем ошибку подключения с подробным описанием
     process.exit(1); // Завершаем приложение, если не удалось подключиться
   });
+
+// Пример запроса для проверки соединения
+client.query('SELECT NOW()', (err, res) => {
+  if (err) {
+    console.error('Database query error:', err.stack);
+    // Логируем ошибку при выполнении запроса
+  } else {
+    console.log('Database query result:', res.rows); 
+    // Логируем успешный результат запроса
+  }
+});
 
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
