@@ -6,10 +6,15 @@ app.use(express.json({ limit: "10mb" }));
 
 // Настройка защиты от флуда
 const rateLimiter = rateLimit({
-  windowMs: 5 * 1000, // 1 минута
-  max: 1, // Максимум 5 запросов за минуту
-  message: "Слишком много запросов. Пожалуйста, подождите минуту.",
+  windowMs: 5 * 1000, // 5 секунд (установить для более короткого окна)
+  max: 5, // Максимум 5 запросов за 5 секунд
+  message: "Слишком много запросов. Пожалуйста, подождите немного.",
   keyGenerator: (req) => req.userId,
+  onLimitReached: (req, res) => {
+    // Логирование превышения лимита запросов
+    console.warn(`Spam detected: User ${req.userId} exceeded the rate limit.`);
+    sendMaxMessage({ type: "user_id", id: req.userId }, "Вы спамите. Пожалуйста, подождите немного.");
+  }
 });
 
 // Используем rate limiter для всех запросов
@@ -714,6 +719,12 @@ async function handleUpdate(update) {
 
     // Увеличиваем счетчик запросов ChatGPT
     incrementRequestCount(userId, "chatgpt");
+
+    // Если текст пустой или спам, игнорируем запрос
+    if (userText.includes("spam")) {
+      await notifyUser(userId, "Вы спамите. Пожалуйста, подождите немного.");
+      return;
+    }
 
     if (!userText && incomingImageUrl) {
       await sendMaxMessage(
