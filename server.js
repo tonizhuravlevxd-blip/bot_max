@@ -1,106 +1,9 @@
 import express from "express";
-// Заменить require на import
-import fs from 'fs';  // Используем import для fs
-
-const path = '/var/data';
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 10000;
-
-app.post('/saveData', async (req, res) => {
-  try {
-    // Логируем входящие данные
-    console.log('Received user data:', req.body);
-
-    // Данные, которые пришли в запросе
-    const userData = req.body;
-
-    // Проверяем, существует ли директория для хранения данных, если нет - создаем
-    console.log('Checking if directory exists...');
-    if (!fs.existsSync(path)) {
-      console.log('Directory does not exist. Creating directory...');
-      fs.mkdirSync(path, { recursive: true });
-    } else {
-      console.log('Directory exists.');
-    }
-
-    const filePath = path + '/userData.json';
-
-    // Логируем путь файла
-    console.log('File path:', filePath);
-
-    // Записываем данные в файл
-    console.log('Writing data to file...');
-    fs.writeFileSync(filePath, JSON.stringify(userData));
-
-    // Логируем успешную запись
-    console.log('Data written to file successfully.');
-
-    // Читаем данные из файла
-    console.log('Reading data from file...');
-    const fileData = fs.readFileSync(filePath, 'utf-8');
-
-    // Логируем данные, которые были прочитаны из файла
-    console.log('File data:', JSON.parse(fileData));
-
-    // Отправляем успешный ответ клиенту
-    res.send('Data has been saved successfully.');
-    
-  } catch (err) {
-    // Логируем ошибку с детальным описанием
-    console.error('Error during /saveData processing:', err);
-
-    // Отправляем ошибку с кодом 500 (Internal Server Error)
-    res.status(500).send('Internal Server Error');
-  }
-});
-
-
-import { Client } from 'pg';
-
-// Получаем переменную окружения DATABASE_URL
-const connectionString = process.env.DATABASE_URL;
-
-if (!connectionString) {
-  console.error('DATABASE_URL is not set in environment variables!');
-  process.exit(1);  // Завершаем приложение, если переменная не найдена
-}
-
-// Настройки подключения к базе данных PostgreSQL
-const client = new Client({
-  connectionString,  // Используем DATABASE_URL для подключения
-  ssl: {
-    rejectUnauthorized: false,  // Для работы с SSL, который требует Render
-  },
-});
-
-// Логирование процесса подключения
-console.log('Attempting to connect to PostgreSQL...');
-
-client.connect()  // Подключаемся к базе данных
-  .then(() => {
-    console.log('Connected to PostgreSQL!');
-    // Логируем успешное подключение
-  })
-  .catch((err) => {
-    console.error('Connection error:', err.stack);
-    // Логируем ошибку подключения с подробным описанием
-    process.exit(1); // Завершаем приложение, если не удалось подключиться
-  });
-
-// Пример запроса для проверки соединения
-client.query('SELECT NOW()', (err, res) => {
-  if (err) {
-    console.error('Database query error:', err.stack);
-    // Логируем ошибку при выполнении запроса
-  } else {
-    console.log('Database query result:', res.rows); 
-    // Логируем успешный результат запроса
-  }
-});
-
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
@@ -815,13 +718,6 @@ app.get("/", (req, res) => {
 app.get("/health", (req, res) => {
   res.status(200).json({ ok: true });
 });
-
-CREATE TABLE user_limits (
-  user_id SERIAL PRIMARY KEY,
-  image_requests INT DEFAULT 0,
-  text_requests INT DEFAULT 0,
-  last_reset_date DATE
-);
 
 app.post("/webhook", (req, res) => {
   if (MAX_WEBHOOK_SECRET) {
