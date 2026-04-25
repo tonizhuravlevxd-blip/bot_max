@@ -9,26 +9,36 @@ app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 10000;
 
-app.post('/saveData', (req, res) => {
-  // Данные, которые пришли в запросе
-  const userData = req.body;
+app.post('/saveData', async (req, res) => {
+  try {
+    // Данные, которые пришли в запросе
+    const userData = req.body;
 
-  // Проверяем, существует ли директория для хранения данных, если нет - создаем
-  if (!fs.existsSync(path)) {
-    fs.mkdirSync(path, { recursive: true });
+    // Проверяем, существует ли директория для хранения данных, если нет - создаем
+    if (!fs.existsSync(path)) {
+      console.log('Directory does not exist. Creating directory...');
+      fs.mkdirSync(path, { recursive: true });
+    }
+
+    const filePath = path + '/userData.json';
+
+    // Записываем данные в файл
+    console.log('Writing data to file...');
+    fs.writeFileSync(filePath, JSON.stringify(userData));
+
+    // Читаем данные из файла
+    const fileData = fs.readFileSync(filePath, 'utf-8');
+    console.log('File data:', JSON.parse(fileData));  // Логируем данные в консоль
+
+    // Отправляем успешный ответ клиенту
+    res.send('Data has been saved successfully.');
+    
+  } catch (err) {
+    // Логируем ошибку
+    console.error('Error during /saveData processing:', err);
+    // Отправляем ошибку с кодом 500 (Internal Server Error)
+    res.status(500).send('Internal Server Error');
   }
-
-  // Путь к файлу, куда мы будем записывать данные
-  const filePath = path + '/userData.json';
-
-  // Записываем данные в файл
-  fs.writeFileSync(filePath, JSON.stringify(userData));
-
-  // Читаем данные из файла
-  const fileData = fs.readFileSync(filePath, 'utf-8');
-  console.log(JSON.parse(fileData));  // Логируем данные в консоль
-
-  res.send('Data has been saved successfully.');
 });
 
 
