@@ -23,6 +23,7 @@ const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS |
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
 
+// Регулярное выражение для распознавания запросов на создание изображений
 const IMAGE_REQUEST_RE =
   /^\s*(?:\/(?:img|image|photo|фото|картинка|изображение)\b|(?:нарисуй|нарисовать)\b|(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\b(?=[\s\S]{0,100}\b(?:фото|фотографи[яю]|картинк[ауи]|изображени[еяе]|рисунок|арт|логотип|аватар|постер|баннер)\b)|(?:generate|make|create)\b(?=[\s\S]{0,100}\b(?:image|photo|picture|drawing|art|logo|avatar|poster|banner)\b))/i;
 
@@ -60,6 +61,7 @@ function splitForMax(text, maxLength = 3900) {
   return chunks;
 }
 
+// Функция для проверки, является ли запрос запросом на создание изображения
 function isImageRequest(userText, hasIncomingImage) {
   if (hasIncomingImage) return true;
   const cleanedText = (userText || "").trim();  // Очистка текста от пробелов
@@ -286,6 +288,7 @@ async function askOpenAI(userText) {
   return extractOpenAIText(data) || "Я получил сообщение, но не смог сформировать ответ.";
 }
 
+// Функции для работы с изображениями: генерация, редактирование и отправка
 function extractImageBase64(data) {
   const fromImagesApi = data?.data?.[0]?.b64_json;
   if (typeof fromImagesApi === "string" && fromImagesApi.trim()) {
@@ -385,135 +388,7 @@ async function editOpenAIImage(prompt, inputImage) {
   return Buffer.from(imageBase64, "base64");
 }
 
-function collectUrls(value, urls = []) {
-  if (!value) return urls;
-
-  if (typeof value === "string") {
-    if (/^https?:\/\//i.test(value)) urls.push(value);
-    return urls;
-  }
-
-  if (Array.isArray(value)) {
-    for (const item of value) collectUrls(item, urls);
-    return urls;
-  }
-
-  if (typeof value === "object") {
-    for (const item of Object.values(value)) collectUrls(item, urls);
-  }
-
-  return urls;
-}
-
-function extractIncomingImageUrl(update) {
-  const attachments = update?.message?.body?.attachments || [];
-
-  for (const attachment of attachments) {
-    const type = String(attachment?.type || "").toLowerCase();
-
-    if (type && !["image", "photo", "file"].includes(type)) continue;
-
-    const urls = collectUrls(attachment);
-
-    const imageUrl =
-      urls.find((url) => /\.(png|jpe?g|webp|gif|bmp|tiff?|heic)(\?|#|$)/i.test(url)) ||
-      urls[0];
-
-    if (imageUrl) return imageUrl;
-  }
-
-  return "";
-}
-
-function guessMimeFromUrl(url) {
-  const cleanUrl = url.split("?")[0].split("#")[0].toLowerCase();
-
-  if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg")) return "image/jpeg";
-  if (cleanUrl.endsWith(".webp")) return "image/webp";
-  if (cleanUrl.endsWith(".gif")) return "image/gif";
-  if (cleanUrl.endsWith(".bmp")) return "image/bmp";
-  if (cleanUrl.endsWith(".tif") || cleanUrl.endsWith(".tiff")) return "image/tiff";
-  if (cleanUrl.endsWith(".heic")) return "image/heic";
-
-  return "image/png";
-}
-
-function extensionFromMime(mime) {
-  if (mime === "image/jpeg") return "jpg";
-  if (mime === "image/webp") return "webp";
-  if (mime === "image/gif") return "gif";
-  if (mime === "image/bmp") return "bmp";
-  if (mime === "image/tiff") return "tiff";
-  if (mime === "image/heic") return "heic";
-
-  return "png";
-}
-
-async function fetchImageBuffer(url, withAuth = false) {
-  const headers = withAuth && MAX_BOT_TOKEN ? { Authorization: MAX_BOT_TOKEN } : undefined;
-
-  const response = await fetch(url, {
-    method: "GET",
-    headers
-  });
-
-  if (!response.ok) {
-    throw new Error(`Image download ${response.status}: ${await response.text().catch(() => "")}`);
-  }
-
-  const contentLength = Number(response.headers.get("content-length") || 0);
-
-  if (contentLength > MAX_INPUT_IMAGE_BYTES) {
-    throw new Error(`Image is too large: ${contentLength} bytes`);
-  }
-
-  const arrayBuffer = await response.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-
-  if (buffer.length > MAX_INPUT_IMAGE_BYTES) {
-    throw new Error(`Image is too large: ${buffer.length} bytes`);
-  }
-
-  const mime = (response.headers.get("content-type") || guessMimeFromUrl(url))
-    .split(";")[0]
-    .trim();
-
-  if (!mime.startsWith("image/")) {
-    throw new Error(`Downloaded file is not an image: ${mime}`);
-  }
-
-  return {
-    buffer,
-    mime,
-    filename: `input.${extensionFromMime(mime)}`
-  };
-}
-
-async function downloadIncomingImage(url) {
-  try {
-    return await fetchImageBuffer(url, false);
-  } catch (error) {
-    if (!/\b(401|403)\b/.test(String(error?.message || ""))) throw error;
-    return fetchImageBuffer(url, true);
-  }
-}
-
-function cleanImagePrompt(text) {
-  return String(text || "")
-    .trim()
-    .replace(/^\s*\/(?:img|image|photo|фото|картинка|изображение)\s*[:\-—]?\s*/i, "")
-    .replace(
-      /^\s*(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\s+(?:мне\s+)?(?:фото|фотографию|картинку|изображение|рисунок|арт)\s*[:\-—]?\s*/i,
-      ""
-    )
-    .replace(/^\s*(?:нарисуй|нарисовать)\s*/i, "")
-    .replace(
-      /^\s*(?:generate|make|create)\s+(?:an?\s+)?(?:image|photo|picture|drawing|art)\s*(?:of)?\s*[:\-—]?\s*/i,
-      ""
-    )
-    .trim();
-}
-
+// Функции для загрузки изображения на платформу MAX и отправки его пользователю
 async function uploadImageToMax(imageBuffer) {
   const uploadInfo = await maxRequest("/uploads", {
     method: "POST",
