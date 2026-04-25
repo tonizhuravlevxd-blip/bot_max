@@ -273,6 +273,26 @@ async function editOpenAIImage(prompt, inputImage) {
   return Buffer.from(imageBase64, "base64");
 }
 
+// Функция для извлечения URL изображения из вложений
+function extractIncomingImageUrl(update) {
+  const attachments = update?.message?.body?.attachments || [];
+
+  for (const attachment of attachments) {
+    const type = String(attachment?.type || "").toLowerCase();
+
+    if (type && !["image", "photo", "file"].includes(type)) continue;
+
+    const urls = collectUrls(attachment);
+    const imageUrl =
+      urls.find((url) => /\.(png|jpe?g|webp|gif|bmp|tiff?|heic)(\?|#|$)/i.test(url)) ||
+      urls[0];
+
+    if (imageUrl) return imageUrl;
+  }
+
+  return "";
+}
+
 async function sendThinkingMessage(target, text) {
   let dots = 0;
   while (true) {
