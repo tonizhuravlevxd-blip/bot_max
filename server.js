@@ -674,12 +674,12 @@ async function handleUpdate(update) {
 
   try {
   if (updateType === "bot_started") {
-    await sendMaxMessage(
-      target,
-      "**Здравствуйте**\n\nНапишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
-    );
-    return;
-  }
+  await sendMaxMessage(
+    target,
+    "👋Здравствуйте.Напишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
+  );
+  return;
+}
 
     if (updateType !== "message_created") return;
 
