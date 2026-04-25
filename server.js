@@ -7,6 +7,36 @@ const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
+const IMAGE_REQUEST_LIMIT = 5; 
+const CHATGPT_REQUEST_LIMIT = 10; 
+
+const userRequestCounts = {};
+
+function getUserRequestKey(userId) {
+  return userId; // Можно использовать любой идентификатор пользователя (например, userId или chatId)
+}
+
+function incrementRequestCount(userId, type) {
+  const key = getUserRequestKey(userId);
+  if (!userRequestCounts[key]) userRequestCounts[key] = { images: 0, chatgpt: 0 };
+
+  userRequestCounts[key][type] += 1;
+}
+
+function isRequestLimitReached(userId, type, limit) {
+  const key = getUserRequestKey(userId);
+  return userRequestCounts[key]?.[type] >= limit;
+}
+
+function resetDailyLimits() {
+  // Сбрасываем лимиты ежедневно, можно настроить с помощью cron-job на сброс в полночь
+  setInterval(() => {
+    Object.keys(userRequestCounts).forEach((key) => {
+      userRequestCounts[key] = { images: 0, chatgpt: 0 };
+    });
+  }, 86400000); // Сбрасываем каждый день (86400000 мс)
+}
+
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
@@ -611,6 +641,16 @@ function safeUserError(error) {
 }
 
 async function handleImageRequest(update, target, userText, incomingImageUrl) {
+  const userId = target.id; // Или извлекайте из отправителя сообщения и т.д.
+
+  // Проверка лимита на запросы изображений
+  if (isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
+    await sendMaxMessage(target, "Вы достигли лимита на запросы изображений на сегодня.");
+    return;
+  }
+
+  incrementRequestCount(userId, "images"); 
+
   const prompt = userText.trim();
 
   if (!prompt) {
@@ -653,6 +693,15 @@ async function handleUpdate(update) {
 
     const userText = getIncomingText(update);
     const incomingImageUrl = extractIncomingImageUrl(update);
+    const userId = target.id; // Идентификатор пользователя для проверки лимитов
+
+    if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
+      await sendMaxMessage(target, "Вы достигли лимита на запросы к ChatGPT на сегодня.");
+      return;
+    }
+
+    // Увеличиваем счетчик запросов ChatGPT
+    incrementRequestCount(userId, "chatgpt");
 
     if (!userText && incomingImageUrl) {
       await sendMaxMessage(
@@ -740,6 +789,8 @@ app.post("/webhook", (req, res) => {
     });
   }
 });
+
+resetDailyLimits();
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`MAX OpenAI bot is running on port ${PORT}`);
