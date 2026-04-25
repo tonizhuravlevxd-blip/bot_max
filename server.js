@@ -1,9 +1,63 @@
 import express from "express";
+const fs = require('fs');
+const path = '/var/data';
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 10000;
+
+app.post('/saveData', (req, res) => {
+  // Данные, которые пришли в запросе
+  const userData = req.body;
+
+  // Проверяем, существует ли директория для хранения данных, если нет - создаем
+  if (!fs.existsSync(path)) {
+    fs.mkdirSync(path, { recursive: true });
+  }
+
+  // Путь к файлу, куда мы будем записывать данные
+  const filePath = path + '/userData.json';
+
+  // Записываем данные в файл
+  fs.writeFileSync(filePath, JSON.stringify(userData));
+
+  // Читаем данные из файла
+  const fileData = fs.readFileSync(filePath, 'utf-8');
+  console.log(JSON.parse(fileData));  // Логируем данные в консоль
+
+  res.send('Data has been saved successfully.');
+});
+
+app.listen(PORT, () => {
+  console.log(`Server is running on port ${PORT}`);
+});
+
+import { Client } from 'pg';
+
+// Получаем переменную окружения DATABASE_URL
+const connectionString = process.env.DATABASE_URL;
+
+if (!connectionString) {
+  console.error('DATABASE_URL is not set in environment variables!');
+  process.exit(1);
+}
+
+// Настройки подключения к базе данных PostgreSQL
+const client = new Client({
+  connectionString,  // Используем DATABASE_URL для подключения
+  ssl: {
+    rejectUnauthorized: false,  // Для работы с SSL, который требует Render
+  },
+});
+
+client.connect()  // Подключаемся к базе данных
+  .then(() => console.log('Connected to PostgreSQL!'))
+  .catch((err) => {
+    console.error('Connection error', err.stack);
+    process.exit(1); // Завершаем приложение, если не удалось подключиться
+  });
+
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
