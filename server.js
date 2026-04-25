@@ -1,18 +1,33 @@
 import express from "express";
 
 const app = express();
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "10mb" }));
 
 const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4";
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
+const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "medium";
+const OPENAI_IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
+
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
 const MAX_WEBHOOK_SECRET = process.env.MAX_WEBHOOK_SECRET || "";
+const MAX_ATTACHMENT_RETRIES = Number(process.env.MAX_ATTACHMENT_RETRIES || 5);
+const MAX_INPUT_IMAGE_BYTES = Number(process.env.MAX_INPUT_IMAGE_BYTES || 20 * 1024 * 1024);
 
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
+
+const IMAGE_REQUEST_RE =
+  /^\s*(\/(?:img|image|photo|фото|картинка|изображение)|нарисуй|сгенерируй\s+(?:фото|картинку|изображение|рисунок|арт)|создай\s+(?:фото|картинку|изображение|рисунок|арт)|сделай\s+(?:фото|картинку|изображение|рисунок|арт)|generate\s+(?:an?\s+)?image|make\s+(?:an?\s+)?image)/i;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 function getIncomingText(update) {
   return update?.message?.body?.text?.trim() || update?.payload?.trim() || "";
@@ -43,24 +58,31 @@ function splitForMax(text, maxLength = 3900) {
 
 async function maxRequest(path, options = {}) {
   const url = new URL(`${MAX_API_BASE}${path}`);
-  url.searchParams.set("access_token", MAX_BOT_TOKEN);
 
   if (options.query) {
     for (const [key, value] of Object.entries(options.query)) {
-      if (value !== undefined && value !== null) url.searchParams.set(key, String(value));
+      if (value !== undefined && value !== null) {
+        url.searchParams.set(key, String(value));
+      }
     }
+  }
+
+  const headers = {
+    Authorization: MAX_BOT_TOKEN
+  };
+
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
   }
 
   const response = await fetch(url, {
     method: options.method || "GET",
-    headers: {
-      "Content-Type": "application/json",
-      "Authorization": MAX_BOT_TOKEN
-    },
-    body: options.body ? JSON.stringify(options.body) : undefined
+    headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
   });
 
   const bodyText = await response.text();
+
   let body;
   try {
     body = bodyText ? JSON.parse(bodyText) : null;
@@ -78,6 +100,7 @@ async function maxRequest(path, options = {}) {
 
 async function sendMaxMessage(target, text) {
   const chunks = splitForMax(text);
+
   for (const chunk of chunks) {
     await maxRequest("/messages", {
       method: "POST",
@@ -90,12 +113,25 @@ async function sendMaxMessage(target, text) {
   }
 }
 
+async function sendMaxMessageWithAttachments(target, text, attachments) {
+  return maxRequest("/messages", {
+    method: "POST",
+    query: { [target.type]: target.id },
+    body: {
+      text: text || null,
+      attachments,
+      notify: true
+    }
+  });
+}
+
 function extractOpenAIText(data) {
   if (typeof data?.output_text === "string" && data.output_text.trim()) {
     return data.output_text.trim();
   }
 
   const parts = [];
+
   for (const item of data?.output || []) {
     for (const content of item?.content || []) {
       if (typeof content?.text === "string") parts.push(content.text);
@@ -111,7 +147,7 @@ async function askOpenAI(userText) {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `Bearer ${OPENAI_API_KEY}`
+      Authorization: `Bearer ${OPENAI_API_KEY}`
     },
     body: JSON.stringify({
       model: OPENAI_MODEL,
@@ -138,6 +174,355 @@ async function askOpenAI(userText) {
   return extractOpenAIText(data) || "Я получил сообщение, но не смог сформировать ответ.";
 }
 
+function extractImageBase64(data) {
+  const fromImagesApi = data?.data?.[0]?.b64_json;
+  if (typeof fromImagesApi === "string" && fromImagesApi.trim()) {
+    return fromImagesApi.trim();
+  }
+
+  const fromResponsesApi = [];
+
+  for (const item of data?.output || []) {
+    if (item?.type === "image_generation_call" && typeof item?.result === "string") {
+      fromResponsesApi.push(item.result);
+    }
+  }
+
+  return fromResponsesApi[0] || "";
+}
+
+function buildImageJsonBody(prompt) {
+  const body = {
+    model: OPENAI_IMAGE_MODEL,
+    prompt,
+    n: 1,
+    size: OPENAI_IMAGE_SIZE,
+    quality: OPENAI_IMAGE_QUALITY,
+    output_format: OPENAI_IMAGE_OUTPUT_FORMAT
+  };
+
+  if (OPENAI_IMAGE_MODEL.startsWith("dall-e")) {
+    body.response_format = "b64_json";
+  }
+
+  return body;
+}
+
+async function generateOpenAIImage(prompt) {
+  const response = await fetch(`${OPENAI_API_BASE}/images/generations`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify(buildImageJsonBody(prompt))
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(`OpenAI image API ${response.status}: ${JSON.stringify(data)}`);
+  }
+
+  const imageBase64 = extractImageBase64(data);
+  if (!imageBase64) {
+    throw new Error("OpenAI image API did not return b64_json");
+  }
+
+  return Buffer.from(imageBase64, "base64");
+}
+
+async function editOpenAIImage(prompt, inputImage) {
+  const form = new FormData();
+
+  form.append("model", OPENAI_IMAGE_MODEL);
+  form.append("prompt", prompt);
+  form.append("size", OPENAI_IMAGE_SIZE);
+  form.append("quality", OPENAI_IMAGE_QUALITY);
+  form.append("output_format", OPENAI_IMAGE_OUTPUT_FORMAT);
+
+  if (OPENAI_IMAGE_MODEL.startsWith("dall-e")) {
+    form.append("response_format", "b64_json");
+  }
+
+  form.append(
+    "image",
+    new Blob([inputImage.buffer], { type: inputImage.mime || "image/png" }),
+    inputImage.filename || "input.png"
+  );
+
+  const response = await fetch(`${OPENAI_API_BASE}/images/edits`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: form
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(`OpenAI image edit API ${response.status}: ${JSON.stringify(data)}`);
+  }
+
+  const imageBase64 = extractImageBase64(data);
+  if (!imageBase64) {
+    throw new Error("OpenAI image edit API did not return b64_json");
+  }
+
+  return Buffer.from(imageBase64, "base64");
+}
+
+function collectUrls(value, urls = []) {
+  if (!value) return urls;
+
+  if (typeof value === "string") {
+    if (/^https?:\/\//i.test(value)) urls.push(value);
+    return urls;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrls(item, urls);
+    return urls;
+  }
+
+  if (typeof value === "object") {
+    for (const item of Object.values(value)) collectUrls(item, urls);
+  }
+
+  return urls;
+}
+
+function extractIncomingImageUrl(update) {
+  const attachments = update?.message?.body?.attachments || [];
+
+  for (const attachment of attachments) {
+    const type = String(attachment?.type || "").toLowerCase();
+
+    if (type && !["image", "photo", "file"].includes(type)) continue;
+
+    const urls = collectUrls(attachment);
+
+    const imageUrl =
+      urls.find((url) => /\.(png|jpe?g|webp|gif|bmp|tiff?|heic)(\?|#|$)/i.test(url)) ||
+      urls[0];
+
+    if (imageUrl) return imageUrl;
+  }
+
+  return "";
+}
+
+function guessMimeFromUrl(url) {
+  const cleanUrl = url.split("?")[0].split("#")[0].toLowerCase();
+
+  if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg")) return "image/jpeg";
+  if (cleanUrl.endsWith(".webp")) return "image/webp";
+  if (cleanUrl.endsWith(".gif")) return "image/gif";
+  if (cleanUrl.endsWith(".bmp")) return "image/bmp";
+  if (cleanUrl.endsWith(".tif") || cleanUrl.endsWith(".tiff")) return "image/tiff";
+  if (cleanUrl.endsWith(".heic")) return "image/heic";
+
+  return "image/png";
+}
+
+function extensionFromMime(mime) {
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/gif") return "gif";
+  if (mime === "image/bmp") return "bmp";
+  if (mime === "image/tiff") return "tiff";
+  if (mime === "image/heic") return "heic";
+
+  return "png";
+}
+
+async function fetchImageBuffer(url, withAuth = false) {
+  const headers = withAuth && MAX_BOT_TOKEN ? { Authorization: MAX_BOT_TOKEN } : undefined;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers
+  });
+
+  if (!response.ok) {
+    throw new Error(`Image download ${response.status}: ${await response.text().catch(() => "")}`);
+  }
+
+  const contentLength = Number(response.headers.get("content-length") || 0);
+
+  if (contentLength > MAX_INPUT_IMAGE_BYTES) {
+    throw new Error(`Image is too large: ${contentLength} bytes`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  if (buffer.length > MAX_INPUT_IMAGE_BYTES) {
+    throw new Error(`Image is too large: ${buffer.length} bytes`);
+  }
+
+  const mime = (response.headers.get("content-type") || guessMimeFromUrl(url))
+    .split(";")[0]
+    .trim();
+
+  if (!mime.startsWith("image/")) {
+    throw new Error(`Downloaded file is not an image: ${mime}`);
+  }
+
+  return {
+    buffer,
+    mime,
+    filename: `input.${extensionFromMime(mime)}`
+  };
+}
+
+async function downloadIncomingImage(url) {
+  try {
+    return await fetchImageBuffer(url, false);
+  } catch (error) {
+    if (!/\b(401|403)\b/.test(String(error?.message || ""))) throw error;
+    return fetchImageBuffer(url, true);
+  }
+}
+
+function cleanImagePrompt(text) {
+  return String(text || "")
+    .trim()
+    .replace(/^\s*\/(?:img|image|photo|фото|картинка|изображение)\s*[:\-—]?\s*/i, "")
+    .replace(
+      /^\s*(сгенерируй|создай|сделай)\s+(мне\s+)?(фото|картинку|изображение|рисунок|арт)\s*[:\-—]?\s*/i,
+      ""
+    )
+    .replace(/^\s*нарисуй\s*/i, "")
+    .replace(/^\s*(generate|make)\s+(an?\s+)?image\s*(of)?\s*[:\-—]?\s*/i, "")
+    .trim();
+}
+
+function isImageRequest(userText, hasIncomingImage) {
+  if (hasIncomingImage) return true;
+  return IMAGE_REQUEST_RE.test(userText || "");
+}
+
+async function uploadImageToMax(imageBuffer) {
+  const uploadInfo = await maxRequest("/uploads", {
+    method: "POST",
+    query: { type: "image" }
+  });
+
+  const uploadUrl = uploadInfo?.url || uploadInfo?.upload_url;
+
+  if (!uploadUrl) {
+    throw new Error(`MAX upload URL is missing: ${JSON.stringify(uploadInfo)}`);
+  }
+
+  const form = new FormData();
+
+  form.append(
+    "data",
+    new Blob([imageBuffer], { type: `image/${OPENAI_IMAGE_OUTPUT_FORMAT}` }),
+    `openai-image.${OPENAI_IMAGE_OUTPUT_FORMAT}`
+  );
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    body: form
+  });
+
+  const bodyText = await response.text();
+
+  let body;
+  try {
+    body = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    body = bodyText;
+  }
+
+  if (!response.ok) {
+    const details = typeof body === "string" ? body : JSON.stringify(body);
+    throw new Error(`MAX upload ${response.status}: ${details}`);
+  }
+
+  if (body?.payload && typeof body.payload === "object") return body.payload;
+  if (body?.retval && typeof body.retval === "object") return body.retval;
+  if (body?.token) return { token: body.token };
+  if (typeof body === "object" && body) return body;
+
+  throw new Error(`MAX upload returned unexpected body: ${JSON.stringify(body)}`);
+}
+
+async function sendMaxImage(target, text, imageBuffer) {
+  const payload = await uploadImageToMax(imageBuffer);
+  const attachments = [{ type: "image", payload }];
+
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_ATTACHMENT_RETRIES; attempt += 1) {
+    try {
+      await sendMaxMessageWithAttachments(target, text, attachments);
+      return;
+    } catch (error) {
+      lastError = error;
+
+      const message = String(error?.message || "");
+
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) {
+        throw error;
+      }
+
+      await sleep(700 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+}
+
+function makeImageCaption(prompt, edited) {
+  const safePrompt = String(prompt || "").slice(0, 1000);
+
+  return edited
+    ? `Готово. Отредактировал фото по запросу:\n${safePrompt}`
+    : `Готово. Промт:\n${safePrompt}`;
+}
+
+function safeUserError(error) {
+  const message = String(error?.message || error || "Unknown error");
+
+  if (/content_policy|safety|moderation/i.test(message)) {
+    return "Не получилось создать изображение: запрос не прошёл проверку безопасности.";
+  }
+
+  if (/OpenAI/i.test(message)) {
+    return "Не получилось получить ответ от OpenAI. Проверьте модель, ключ API и лимиты аккаунта.";
+  }
+
+  if (/MAX/i.test(message)) {
+    return "Не получилось отправить ответ в MAX. Проверьте токен, webhook и права бота.";
+  }
+
+  return "Произошла ошибка при обработке запроса.";
+}
+
+async function handleImageRequest(update, target, userText, incomingImageUrl) {
+  const prompt = cleanImagePrompt(userText) || userText.trim();
+
+  if (!prompt) {
+    await sendMaxMessage(
+      target,
+      "Пришлите описание изображения. Например: /img кот в космосе, кинематографичный стиль."
+    );
+    return;
+  }
+
+  const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
+
+  const imageBuffer = inputImage
+    ? await editOpenAIImage(prompt, inputImage)
+    : await generateOpenAIImage(prompt);
+
+  await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
+}
+
 async function handleUpdate(update) {
   const updateType = update?.update_type;
   const target = getReplyTarget(update);
@@ -147,26 +532,58 @@ async function handleUpdate(update) {
     return;
   }
 
-  if (updateType === "bot_started") {
-    await sendMaxMessage(target, "Здравствуйте. Напишите вопрос, и я отвечу через OpenAI.");
-    return;
+  try {
+    if (updateType === "bot_started") {
+      await sendMaxMessage(
+        target,
+        "Здравствуйте. Напишите вопрос, или отправьте /img и описание картинки."
+      );
+      return;
+    }
+
+    if (updateType !== "message_created") return;
+
+    const userText = getIncomingText(update);
+    const incomingImageUrl = extractIncomingImageUrl(update);
+
+    if (!userText && incomingImageUrl) {
+      await sendMaxMessage(
+        target,
+        "Фото получил. Теперь отправьте его вместе с текстом, что нужно изменить или создать на его основе."
+      );
+      return;
+    }
+
+    if (!userText) {
+      await sendMaxMessage(
+        target,
+        "Я пока умею отвечать на текст, а также генерировать изображения по команде /img."
+      );
+      return;
+    }
+
+    if (userText === "/start") {
+      await sendMaxMessage(
+        target,
+        "Бот работает. Напишите вопрос или используйте /img описание картинки."
+      );
+      return;
+    }
+
+    if (isImageRequest(userText, Boolean(incomingImageUrl))) {
+      await handleImageRequest(update, target, userText, incomingImageUrl);
+      return;
+    }
+
+    const answer = await askOpenAI(userText);
+    await sendMaxMessage(target, answer);
+  } catch (error) {
+    console.error("Update handling failed:", error);
+
+    await sendMaxMessage(target, safeUserError(error)).catch((sendError) => {
+      console.error("Failed to send error message to MAX:", sendError);
+    });
   }
-
-  if (updateType !== "message_created") return;
-
-  const userText = getIncomingText(update);
-  if (!userText) {
-    await sendMaxMessage(target, "Я пока умею отвечать только на текстовые сообщения.");
-    return;
-  }
-
-  if (userText === "/start") {
-    await sendMaxMessage(target, "Бот работает. Напишите любой вопрос.");
-    return;
-  }
-
-  const answer = await askOpenAI(userText);
-  await sendMaxMessage(target, answer);
 }
 
 app.get("/", (req, res) => {
@@ -184,6 +601,7 @@ app.get("/health", (req, res) => {
 app.post("/webhook", (req, res) => {
   if (MAX_WEBHOOK_SECRET) {
     const receivedSecret = req.get("X-Max-Bot-Api-Secret") || "";
+
     if (receivedSecret !== MAX_WEBHOOK_SECRET) {
       res.status(401).json({ ok: false, error: "Invalid webhook secret" });
       return;
@@ -197,7 +615,7 @@ app.post("/webhook", (req, res) => {
 
   for (const update of updates) {
     handleUpdate(update).catch((error) => {
-      console.error("Update handling failed:", error);
+      console.error("Unhandled update handling failure:", error);
     });
   }
 });
