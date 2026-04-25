@@ -10,7 +10,7 @@ function getUserIdFromUpdate(update) {
 
 // Настройка защиты от флуда
 const rateLimiter = rateLimit({
-  windowMs: 5 * 1000, // 5 секунд (установить для более короткого окна)
+  windowMs: 3 * 1000, // 5 секунд (установить для более короткого окна)
   max: 1, // Максимум 5 запросов за 5 секунд
   message: "Слишком много запросов. Пожалуйста, подождите немного.",
   keyGenerator: (req) => req.userId,
