@@ -295,11 +295,16 @@ function extractIncomingImageUrl(update) {
 
 async function sendThinkingMessage(target, text) {
   let dots = 0;
+  const messageId = Date.now(); // Уникальный идентификатор для сообщения
+
+  // Начинаем с пустых точек
+  await sendMaxMessage(target, `${text}...`);
+
   while (true) {
     const message = `${text}${'.'.repeat(dots)}`;
-    await sendMaxMessage(target, message);
+    await sendMaxMessage(target, message); // Обновляем сообщение с точками
     dots = (dots + 1) % 4;
-    await sleep(500);
+    await sleep(500); // Ожидание перед следующим обновлением
   }
 }
 
@@ -315,7 +320,7 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
   }
 
   const textDuringProcessing = "Шедевр создается";
-  await sendThinkingMessage(target, textDuringProcessing);
+  await sendThinkingMessage(target, textDuringProcessing); // Динамическое обновление точек
 
   const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
 
