@@ -672,17 +672,14 @@ async function handleUpdate(update) {
     return;
   }
 
-  // Handling the bot started event
-  if (updateType === "bot_started") {
-    await sendMaxMessage(
-      target,
-      "👋 <b>Здравствуйте</b>. Напишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
-    );
-    return; // This return is now inside the function, so it's valid
-  }
-
-  if (updateType !== "message_created") return; // Ensuring the return is inside the function
-}
+  try {
+    if (updateType === "bot_started") {
+      await sendMaxMessage(
+        target,
+        "Здравствуйте. Напишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
+      );
+      return;
+    }
 
     if (updateType !== "message_created") return;
 
