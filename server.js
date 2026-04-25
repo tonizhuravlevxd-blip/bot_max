@@ -31,9 +31,6 @@ app.post('/saveData', (req, res) => {
   res.send('Data has been saved successfully.');
 });
 
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
-});
 
 import { Client } from 'pg';
 
