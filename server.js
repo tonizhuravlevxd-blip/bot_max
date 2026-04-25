@@ -68,6 +68,19 @@ function isImageRequest(userText, hasIncomingImage) {
   return IMAGE_REQUEST_RE.test(cleanedText);  // Проверка с новым регулярным выражением
 }  
 
+function extractIncomingImageUrl(update) {
+  const attachments = update?.message?.body?.attachments || [];
+  
+  for (const attachment of attachments) {
+    const type = String(attachment?.type || "").toLowerCase();
+    if (type && !["image", "photo", "file"].includes(type)) continue;
+
+    const urls = collectUrls(attachment);
+    const imageUrl = urls.find((url) => /\.(png|jpe?g|webp|gif|bmp|tiff?|heic)(\?|#|$)/i.test(url)) || urls[0];
+
+    if (imageUrl) return imageUrl;
+  }
+
 async function maxRequest(path, options = {}) {
   const url = new URL(`${MAX_API_BASE}${path}`);
 
