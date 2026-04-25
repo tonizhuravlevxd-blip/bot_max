@@ -11,31 +11,47 @@ const PORT = process.env.PORT || 10000;
 
 app.post('/saveData', async (req, res) => {
   try {
+    // Логируем входящие данные
+    console.log('Received user data:', req.body);
+
     // Данные, которые пришли в запросе
     const userData = req.body;
 
     // Проверяем, существует ли директория для хранения данных, если нет - создаем
+    console.log('Checking if directory exists...');
     if (!fs.existsSync(path)) {
       console.log('Directory does not exist. Creating directory...');
       fs.mkdirSync(path, { recursive: true });
+    } else {
+      console.log('Directory exists.');
     }
 
     const filePath = path + '/userData.json';
+
+    // Логируем путь файла
+    console.log('File path:', filePath);
 
     // Записываем данные в файл
     console.log('Writing data to file...');
     fs.writeFileSync(filePath, JSON.stringify(userData));
 
+    // Логируем успешную запись
+    console.log('Data written to file successfully.');
+
     // Читаем данные из файла
+    console.log('Reading data from file...');
     const fileData = fs.readFileSync(filePath, 'utf-8');
-    console.log('File data:', JSON.parse(fileData));  // Логируем данные в консоль
+
+    // Логируем данные, которые были прочитаны из файла
+    console.log('File data:', JSON.parse(fileData));
 
     // Отправляем успешный ответ клиенту
     res.send('Data has been saved successfully.');
     
   } catch (err) {
-    // Логируем ошибку
+    // Логируем ошибку с детальным описанием
     console.error('Error during /saveData processing:', err);
+
     // Отправляем ошибку с кодом 500 (Internal Server Error)
     res.status(500).send('Internal Server Error');
   }
