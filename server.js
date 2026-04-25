@@ -7,7 +7,7 @@ const path = '/var/data';
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 
-const PORT = process.env.PORT || 50000;
+const PORT = process.env.PORT || 10000;
 
 app.post('/saveData', (req, res) => {
   // Данные, которые пришли в запросе
