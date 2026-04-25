@@ -17,7 +17,7 @@ const rateLimiter = rateLimit({
   onLimitReached: (req, res) => {
     // Логирование превышения лимита запросов
     console.warn(`Spam detected: User ${req.userId} exceeded the rate limit.`);
-    sendMaxMessage({ type: "user_id", id: req.userId }, "Может хватит *спамить*? Пожалуйста,подождите немного😅");
+    sendMaxMessage({ type: "user_id", id: req.userId }, "Может хватит **спамить**? Пожалуйста,подождите немного😅");
   }
 });
 
@@ -671,7 +671,7 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
 
   // Проверка лимита на запросы изображений
   if (isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
-    await sendMaxMessage(target, "🥱Вы достигли лимита на создание *Шедевров* сегодня,приходите позже и продолжайте");
+    await sendMaxMessage(target, "🥱Вы достигли лимита на создание **Шедевров** сегодня,приходите позже и продолжайте");
     return;
   }
 
@@ -698,7 +698,7 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
 
 
 async function handleSpamWarning(userId) {
-  await sendMaxMessage({ type: "user_id", id: userId }, "📛*Вы спамите*. Пожалуйста, подождите немного.Система может *заблокировать* вас🙈");
+  await sendMaxMessage({ type: "user_id", id: userId }, "📛**Вы спамите**. Пожалуйста, подождите немного.Система может **заблокировать** вас🙈");
   console.warn(`User ${userId} was warned for spamming.`);
 }
 
