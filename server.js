@@ -18,12 +18,15 @@ const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
 const MAX_WEBHOOK_SECRET = process.env.MAX_WEBHOOK_SECRET || "";
 const MAX_ATTACHMENT_RETRIES = Number(process.env.MAX_ATTACHMENT_RETRIES || 5);
 const MAX_INPUT_IMAGE_BYTES = Number(process.env.MAX_INPUT_IMAGE_BYTES || 20 * 1024 * 1024);
+const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS || 850);
 
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
 
 const IMAGE_REQUEST_RE =
-  /^\s*(сгенерируй\s+(?:фото|картинку|изображение|рисунок|арт)|создай\s+(?:фото|картинку|изображение|рисунок|арт)|сделай\s+(?:фото|картинку|изображение|рисунок|арт)|generate\s+(?:an?\s+)?image|make\s+(?:an?\s+)?image)/i;
+  /^\s*(?:\/(?:img|image|photo|фото|картинка|изображение)\b|(?:нарисуй|нарисовать)\b|(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\b(?=[\s\S]{0,100}\b(?:фото|фотографи[яю]|картинк[ауи]|изображени[еяе]|рисунок|арт|логотип|аватар|постер|баннер)\b)|(?:generate|make|create)\b(?=[\s\S]{0,100}\b(?:image|photo|picture|drawing|art|logo|avatar|poster|banner)\b))/i;
+
+const STATUS_DOT_FRAMES = [".", "..", "..."];
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -53,6 +56,7 @@ function splitForMax(text, maxLength = 3900) {
   for (let i = 0; i < clean.length; i += maxLength) {
     chunks.push(clean.slice(i, i + maxLength));
   }
+
   return chunks;
 }
 
@@ -98,19 +102,27 @@ async function maxRequest(path, options = {}) {
   return body;
 }
 
+async function sendMaxSingleMessage(target, text, notify = true) {
+  return maxRequest("/messages", {
+    method: "POST",
+    query: { [target.type]: target.id },
+    body: {
+      text,
+      notify
+    }
+  });
+}
+
 async function sendMaxMessage(target, text) {
   const chunks = splitForMax(text);
+  const results = [];
 
   for (const chunk of chunks) {
-    await maxRequest("/messages", {
-      method: "POST",
-      query: { [target.type]: target.id },
-      body: {
-        text: chunk,
-        notify: true
-      }
-    });
+    const result = await sendMaxSingleMessage(target, chunk, true);
+    results.push(result);
   }
+
+  return results;
 }
 
 async function sendMaxMessageWithAttachments(target, text, attachments) {
@@ -123,6 +135,100 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
       notify: true
     }
   });
+}
+
+function extractMaxMessageId(result) {
+  const candidates = [
+    result?.message?.body?.mid,
+    result?.message?.body?.message_id,
+    result?.message?.mid,
+    result?.message?.id,
+    result?.body?.mid,
+    result?.body?.message_id,
+    result?.mid,
+    result?.message_id,
+    result?.id
+  ];
+
+  const found = candidates.find((value) => value !== undefined && value !== null && String(value).trim());
+  return found ? String(found) : "";
+}
+
+async function editMaxMessage(messageId, text) {
+  if (!messageId) return null;
+
+  return maxRequest("/messages", {
+    method: "PUT",
+    query: { message_id: messageId },
+    body: {
+      text,
+      notify: false
+    }
+  });
+}
+
+async function deleteMaxMessage(messageId) {
+  if (!messageId) return;
+
+  try {
+    await maxRequest("/messages", {
+      method: "DELETE",
+      query: { message_id: messageId }
+    });
+    return;
+  } catch (error) {
+    console.warn("MAX message delete failed, fallback to clearing status:", error?.message || error);
+  }
+
+  try {
+    await editMaxMessage(messageId, "⠀");
+  } catch (error) {
+    console.warn("MAX status clear fallback failed:", error?.message || error);
+  }
+}
+
+async function startDynamicStatus(target, baseText) {
+  let frameIndex = 0;
+  let stopped = false;
+  let editInProgress = false;
+
+  const sent = await sendMaxSingleMessage(target, `${baseText}${STATUS_DOT_FRAMES[frameIndex]}`, false).catch(
+    (error) => {
+      console.warn("Failed to send dynamic status:", error?.message || error);
+      return null;
+    }
+  );
+
+  const messageId = extractMaxMessageId(sent);
+
+  if (!messageId) {
+    return {
+      stop: async () => {}
+    };
+  }
+
+  const timer = setInterval(async () => {
+    if (stopped || editInProgress) return;
+
+    editInProgress = true;
+    frameIndex = (frameIndex + 1) % STATUS_DOT_FRAMES.length;
+
+    try {
+      await editMaxMessage(messageId, `${baseText}${STATUS_DOT_FRAMES[frameIndex]}`);
+    } catch (error) {
+      console.warn("Failed to edit dynamic status:", error?.message || error);
+    } finally {
+      editInProgress = false;
+    }
+  }, STATUS_UPDATE_INTERVAL_MS);
+
+  return {
+    stop: async () => {
+      stopped = true;
+      clearInterval(timer);
+      await deleteMaxMessage(messageId);
+    }
+  };
 }
 
 function extractOpenAIText(data) {
@@ -273,7 +379,6 @@ async function editOpenAIImage(prompt, inputImage) {
   return Buffer.from(imageBase64, "base64");
 }
 
-// Функция для извлечения URL изображения из вложений
 function collectUrls(value, urls = []) {
   if (!value) return urls;
 
@@ -303,6 +408,7 @@ function extractIncomingImageUrl(update) {
     if (type && !["image", "photo", "file"].includes(type)) continue;
 
     const urls = collectUrls(attachment);
+
     const imageUrl =
       urls.find((url) => /\.(png|jpe?g|webp|gif|bmp|tiff?|heic)(\?|#|$)/i.test(url)) ||
       urls[0];
@@ -313,34 +419,209 @@ function extractIncomingImageUrl(update) {
   return "";
 }
 
-async function sendThinkingMessage(target, text) {
-  let dots = 0;
-  const messageId = Date.now(); // Уникальный идентификатор для сообщения
+function guessMimeFromUrl(url) {
+  const cleanUrl = url.split("?")[0].split("#")[0].toLowerCase();
 
-  // Начинаем с пустых точек
-  await sendMaxMessage(target, `${text}...`);
+  if (cleanUrl.endsWith(".jpg") || cleanUrl.endsWith(".jpeg")) return "image/jpeg";
+  if (cleanUrl.endsWith(".webp")) return "image/webp";
+  if (cleanUrl.endsWith(".gif")) return "image/gif";
+  if (cleanUrl.endsWith(".bmp")) return "image/bmp";
+  if (cleanUrl.endsWith(".tif") || cleanUrl.endsWith(".tiff")) return "image/tiff";
+  if (cleanUrl.endsWith(".heic")) return "image/heic";
 
-  while (true) {
-    const message = `${text}${'.'.repeat(dots)}`;
-    await sendMaxMessage(target, message); // Обновляем сообщение с точками
-    dots = (dots + 1) % 4;
-    await sleep(500); // Ожидание перед следующим обновлением
+  return "image/png";
+}
+
+function extensionFromMime(mime) {
+  if (mime === "image/jpeg") return "jpg";
+  if (mime === "image/webp") return "webp";
+  if (mime === "image/gif") return "gif";
+  if (mime === "image/bmp") return "bmp";
+  if (mime === "image/tiff") return "tiff";
+  if (mime === "image/heic") return "heic";
+
+  return "png";
+}
+
+async function fetchImageBuffer(url, withAuth = false) {
+  const headers = withAuth && MAX_BOT_TOKEN ? { Authorization: MAX_BOT_TOKEN } : undefined;
+
+  const response = await fetch(url, {
+    method: "GET",
+    headers
+  });
+
+  if (!response.ok) {
+    throw new Error(`Image download ${response.status}: ${await response.text().catch(() => "")}`);
+  }
+
+  const contentLength = Number(response.headers.get("content-length") || 0);
+
+  if (contentLength > MAX_INPUT_IMAGE_BYTES) {
+    throw new Error(`Image is too large: ${contentLength} bytes`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+
+  if (buffer.length > MAX_INPUT_IMAGE_BYTES) {
+    throw new Error(`Image is too large: ${buffer.length} bytes`);
+  }
+
+  const mime = (response.headers.get("content-type") || guessMimeFromUrl(url))
+    .split(";")[0]
+    .trim();
+
+  if (!mime.startsWith("image/")) {
+    throw new Error(`Downloaded file is not an image: ${mime}`);
+  }
+
+  return {
+    buffer,
+    mime,
+    filename: `input.${extensionFromMime(mime)}`
+  };
+}
+
+async function downloadIncomingImage(url) {
+  try {
+    return await fetchImageBuffer(url, false);
+  } catch (error) {
+    if (!/\b(401|403)\b/.test(String(error?.message || ""))) throw error;
+    return fetchImageBuffer(url, true);
   }
 }
 
+function cleanImagePrompt(text) {
+  return String(text || "")
+    .trim()
+    .replace(/^\s*\/(?:img|image|photo|фото|картинка|изображение)\s*[:\-—]?\s*/i, "")
+    .replace(
+      /^\s*(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\s+(?:мне\s+)?(?:фото|фотографию|картинку|изображение|рисунок|арт)\s*[:\-—]?\s*/i,
+      ""
+    )
+    .replace(/^\s*(?:нарисуй|нарисовать)\s*/i, "")
+    .replace(
+      /^\s*(?:generate|make|create)\s+(?:an?\s+)?(?:image|photo|picture|drawing|art)\s*(?:of)?\s*[:\-—]?\s*/i,
+      ""
+    )
+    .trim();
+}
+
+function isImageRequest(userText, hasIncomingImage) {
+  if (hasIncomingImage) return true;
+  return IMAGE_REQUEST_RE.test(userText || "");
+}
+
+async function uploadImageToMax(imageBuffer) {
+  const uploadInfo = await maxRequest("/uploads", {
+    method: "POST",
+    query: { type: "image" }
+  });
+
+  const uploadUrl = uploadInfo?.url || uploadInfo?.upload_url;
+
+  if (!uploadUrl) {
+    throw new Error(`MAX upload URL is missing: ${JSON.stringify(uploadInfo)}`);
+  }
+
+  const form = new FormData();
+
+  form.append(
+    "data",
+    new Blob([imageBuffer], { type: `image/${OPENAI_IMAGE_OUTPUT_FORMAT}` }),
+    `openai-image.${OPENAI_IMAGE_OUTPUT_FORMAT}`
+  );
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    body: form
+  });
+
+  const bodyText = await response.text();
+
+  let body;
+  try {
+    body = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    body = bodyText;
+  }
+
+  if (!response.ok) {
+    const details = typeof body === "string" ? body : JSON.stringify(body);
+    throw new Error(`MAX upload ${response.status}: ${details}`);
+  }
+
+  if (body?.payload && typeof body.payload === "object") return body.payload;
+  if (body?.retval && typeof body.retval === "object") return body.retval;
+  if (body?.token) return { token: body.token };
+  if (typeof body === "object" && body) return body;
+
+  throw new Error(`MAX upload returned unexpected body: ${JSON.stringify(body)}`);
+}
+
+async function sendMaxImage(target, text, imageBuffer) {
+  const payload = await uploadImageToMax(imageBuffer);
+  const attachments = [{ type: "image", payload }];
+
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_ATTACHMENT_RETRIES; attempt += 1) {
+    try {
+      await sendMaxMessageWithAttachments(target, text, attachments);
+      return;
+    } catch (error) {
+      lastError = error;
+
+      const message = String(error?.message || "");
+
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) {
+        throw error;
+      }
+
+      await sleep(700 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+}
+
+function makeImageCaption(prompt, edited) {
+  const safePrompt = String(prompt || "").slice(0, 1000);
+
+  return edited
+    ? `Готово. Отредактировал фото по запросу:\n${safePrompt}`
+    : `Готово. Промт:\n${safePrompt}`;
+}
+
+function safeUserError(error) {
+  const message = String(error?.message || error || "Unknown error");
+
+  if (/content_policy|safety|moderation/i.test(message)) {
+    return "Не получилось создать изображение: запрос не прошёл проверку безопасности.";
+  }
+
+  if (/OpenAI/i.test(message)) {
+    return "Не получилось получить ответ от OpenAI. Проверьте модель, ключ API и лимиты аккаунта.";
+  }
+
+  if (/MAX/i.test(message)) {
+    return "Не получилось отправить ответ в MAX. Проверьте токен, webhook и права бота.";
+  }
+
+  return "Произошла ошибка при обработке запроса.";
+}
+
 async function handleImageRequest(update, target, userText, incomingImageUrl) {
-  const prompt = userText.trim();
+  const prompt = cleanImagePrompt(userText) || userText.trim();
 
   if (!prompt) {
     await sendMaxMessage(
       target,
-      "Пришлите описание изображения. Например: создать картинку кота в космосе, кинематографичный стиль."
+      "Пришлите описание изображения. Например: создай фото кота в космосе, кинематографичный стиль."
     );
     return;
   }
-
-  const textDuringProcessing = "Шедевр создается";
-  await sendThinkingMessage(target, textDuringProcessing); // Динамическое обновление точек
 
   const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
 
@@ -348,12 +629,13 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
     ? await editOpenAIImage(prompt, inputImage)
     : await generateOpenAIImage(prompt);
 
-  await sendMaxImage(target, `Готово: Промт - ${prompt}`, imageBuffer);
+  await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
 }
 
 async function handleUpdate(update) {
   const updateType = update?.update_type;
   const target = getReplyTarget(update);
+  let status = null;
 
   if (!target) {
     console.log("No reply target in update:", JSON.stringify(update));
@@ -364,7 +646,7 @@ async function handleUpdate(update) {
     if (updateType === "bot_started") {
       await sendMaxMessage(
         target,
-        "Здравствуйте. Напишите запрос, или отправьте описание для создания фото/картинки."
+        "Здравствуйте. Напишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
       );
       return;
     }
@@ -374,15 +656,56 @@ async function handleUpdate(update) {
     const userText = getIncomingText(update);
     const incomingImageUrl = extractIncomingImageUrl(update);
 
-    if (userText && IMAGE_REQUEST_RE.test(userText)) {
-      await handleImageRequest(update, target, userText, incomingImageUrl);
-    } else {
-      const answer = await askOpenAI(userText);
-      await sendMaxMessage(target, answer);
+    if (!userText && incomingImageUrl) {
+      await sendMaxMessage(
+        target,
+        "Фото получил. Теперь отправьте его вместе с текстом, что нужно изменить или создать на его основе."
+      );
+      return;
     }
+
+    if (!userText) {
+      await sendMaxMessage(
+        target,
+        "Я пока умею отвечать на текст, а также создавать изображения по запросам вроде: создай фото кота в космосе."
+      );
+      return;
+    }
+
+    if (userText === "/start") {
+      await sendMaxMessage(
+        target,
+        "Бот работает. Напишите вопрос или попросите создать фото/картинку. Команда /img тоже поддерживается, но уже не обязательна."
+      );
+      return;
+    }
+
+    if (isImageRequest(userText, Boolean(incomingImageUrl))) {
+      status = await startDynamicStatus(target, "Шедевр создается");
+      await handleImageRequest(update, target, userText, incomingImageUrl);
+      await status.stop();
+      status = null;
+      return;
+    }
+
+    status = await startDynamicStatus(target, "ИИ думает");
+    const answer = await askOpenAI(userText);
+    await status.stop();
+    status = null;
+
+    await sendMaxMessage(target, answer);
   } catch (error) {
     console.error("Update handling failed:", error);
-    await sendMaxMessage(target, "Произошла ошибка при обработке запроса.");
+
+    if (status) {
+      await status.stop().catch((statusError) => {
+        console.error("Failed to remove dynamic status:", statusError);
+      });
+    }
+
+    await sendMaxMessage(target, safeUserError(error)).catch((sendError) => {
+      console.error("Failed to send error message to MAX:", sendError);
+    });
   }
 }
 
