@@ -1,7 +1,18 @@
 import express from "express";
+import rateLimit from "express-rate-limit";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+
+// Настройка защиты от флуда
+const rateLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 минута
+  max: 5, // Максимум 5 запросов за минуту
+  message: "Слишком много запросов. Пожалуйста, подождите минуту.",
+});
+
+// Используем rate limiter для всех запросов
+app.use(rateLimiter);
 
 const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
