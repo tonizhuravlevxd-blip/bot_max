@@ -717,7 +717,7 @@ async function handleUpdate(update) {
     if (updateType === "bot_started") {
       await sendMaxMessage(
         target,
-        "Здравствуйте. Напишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
+        "**Здравствуйте**. Напишите вопрос или попросите **создать фото/картинку**. Например: создай фото кота в космосе."
       );
       return;
     }
@@ -729,7 +729,7 @@ async function handleUpdate(update) {
     const userId = target.id; // Идентификатор пользователя для проверки лимитов
 
     if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
-      await sendMaxMessage(target, "Кажется вам надо немного отдохнуть от ИИ🏝️,Приходите чуть позже и продолжайте🦦");
+      await sendMaxMessage(target, "Кажется вам надо немного отдохнуть от ИИ🏝️,**Приходите чуть позже и продолжайте**🦦");
       return;
     }
 
@@ -738,7 +738,7 @@ async function handleUpdate(update) {
 
     // Если текст пустой или спам, игнорируем запрос
     if (userText.includes("spam")) {
-      await sendMaxMessage(target, "Вы спамите. Пожалуйста, подождите немного.");
+      await sendMaxMessage(target, "**Это уже не смешно🥺.Стоп спам,пожалуйста😢**.");
       return;
     }
 
@@ -768,20 +768,20 @@ async function handleUpdate(update) {
     if (userText === "/start") {
       await sendMaxMessage(
         target,
-        "🦄Бот работает. Напишите вопрос или попросите создать фото/картинку."
+        "🦄**Бот работает**. Напишите вопрос или попросите создать фото/картинку."
       );
       return;
     }
 
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
-      status = await startDynamicStatus(target, "Шедевр создается");
+      status = await startDynamicStatus(target, "👽Шедевр создается");
       await handleImageRequest(update, target, userText, incomingImageUrl);
       await status.stop();
       status = null;
       return;
     }
 
-    status = await startDynamicStatus(target, "ИИ думает");
+    status = await startDynamicStatus(target, "💬ИИ думает");
     const answer = await askOpenAI(userText);
     await status.stop();
     status = null;
