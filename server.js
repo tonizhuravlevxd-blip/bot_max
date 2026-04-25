@@ -274,6 +274,26 @@ async function editOpenAIImage(prompt, inputImage) {
 }
 
 // Функция для извлечения URL изображения из вложений
+function collectUrls(value, urls = []) {
+  if (!value) return urls;
+
+  if (typeof value === "string") {
+    if (/^https?:\/\//i.test(value)) urls.push(value);
+    return urls;
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) collectUrls(item, urls);
+    return urls;
+  }
+
+  if (typeof value === "object") {
+    for (const item of Object.values(value)) collectUrls(item, urls);
+  }
+
+  return urls;
+}
+
 function extractIncomingImageUrl(update) {
   const attachments = update?.message?.body?.attachments || [];
 
