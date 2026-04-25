@@ -27,7 +27,7 @@ const IMAGE_COMMAND_RE =
   /^\s*\/(?:img|image|photo|фото|картинка|изображение)(?=$|[\s:—-])/iu;
 
 const IMAGE_VERB_RE =
-  /(?:^|[^\p{L}\p{N}_])(?:нарисуй|нарисовать|сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй|generate|make|create)(?=$|[^\p{L}\p{N}_])/iu;
+  /(?:^|[^\p{L}\p{N}_])(?:Нарисуй|нарисовать|сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй|generate|make|create)(?=$|[^\p{L}\p{N}_])/iu;
 
 const IMAGE_OBJECT_RE =
   /(?:^|[^\p{L}\p{N}_])(?:фото|фотографи[яюе]|фотку|картинк[ауие]|изображени[еяю]|рисунок|арт|логотип|аватар|постер|баннер|image|photo|picture|drawing|art|logo|avatar|poster|banner)(?=$|[^\p{L}\p{N}_])/iu;
@@ -673,13 +673,13 @@ async function handleUpdate(update) {
   }
 
   try {
-    if (updateType === "bot_started") {
-      await sendMaxMessage(
-        target,
-        "Здравствуйте. Напишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
-      );
-      return;
-    }
+  if (updateType === "bot_started") {
+    await sendMaxMessage(
+      target,
+      "<b>Здравствуйте</b>\n\nНапишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
+    );
+    return;
+  }
 
     if (updateType !== "message_created") return;
 
@@ -705,7 +705,7 @@ async function handleUpdate(update) {
     if (userText === "/start") {
       await sendMaxMessage(
         target,
-        "Бот работает. Напишите вопрос или попросите создать фото/картинку."
+        "🦄Бот работает. Напишите вопрос или попросите создать фото/картинку."
       );
       return;
     }
