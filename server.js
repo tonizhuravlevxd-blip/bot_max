@@ -514,11 +514,6 @@ function cleanImagePrompt(text) {
     .trim();
 }
 
-function isImageRequest(userText, hasIncomingImage) {
-  if (hasIncomingImage) return true;
-  return IMAGE_REQUEST_RE.test(userText || "");
-}
-
 async function uploadImageToMax(imageBuffer) {
   const uploadInfo = await maxRequest("/uploads", {
     method: "POST",
