@@ -23,8 +23,14 @@ const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS |
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
 
-const IMAGE_REQUEST_RE =
-  /^\s*(?:\/(?:img|image|photo|фото|картинка|изображение)\b|(?:нарисуй|нарисовать)\b|(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\b(?=[\s\S]{0,100}\b(?:фото|фотографи[яю]|картинк[ауи]|изображени[еяе]|рисунок|арт|логотип|аватар|постер|баннер)\b)|(?:generate|make|create)\b(?=[\s\S]{0,100}\b(?:image|photo|picture|drawing|art|logo|avatar|poster|banner)\b))/i;
+const IMAGE_COMMAND_RE =
+  /^\s*\/(?:img|image|photo|фото|картинка|изображение)(?=$|[\s:—-])/iu;
+
+const IMAGE_VERB_RE =
+  /(?:^|[^\p{L}\p{N}_])(?:нарисуй|нарисовать|сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй|generate|make|create)(?=$|[^\p{L}\p{N}_])/iu;
+
+const IMAGE_OBJECT_RE =
+  /(?:^|[^\p{L}\p{N}_])(?:фото|фотографи[яюе]|фотку|картинк[ауие]|изображени[еяю]|рисунок|арт|логотип|аватар|постер|баннер|image|photo|picture|drawing|art|logo|avatar|poster|banner)(?=$|[^\p{L}\p{N}_])/iu;
 
 const STATUS_DOT_FRAMES = [".", "..", "..."];
 
@@ -62,9 +68,14 @@ function splitForMax(text, maxLength = 3900) {
 
 function isImageRequest(userText, hasIncomingImage) {
   if (hasIncomingImage) return true;
-  const cleanedText = (userText || "").trim();  // Очистка текста от пробелов
-  return IMAGE_REQUEST_RE.test(cleanedText);  // Проверка с новым регулярным выражением
-}  
+
+  const text = String(userText || "").trim();
+  if (!text) return false;
+
+  if (IMAGE_COMMAND_RE.test(text)) return true;
+
+  return IMAGE_VERB_RE.test(text) && IMAGE_OBJECT_RE.test(text);
+}
 
 async function maxRequest(path, options = {}) {
   const url = new URL(`${MAX_API_BASE}${path}`);
@@ -499,19 +510,37 @@ async function downloadIncomingImage(url) {
 }
 
 function cleanImagePrompt(text) {
-  return String(text || "")
-    .trim()
-    .replace(/^\s*\/(?:img|image|photo|фото|картинка|изображение)\s*[:\-—]?\s*/i, "")
+  let prompt = String(text || "").trim();
+
+  prompt = prompt
     .replace(
-      /^\s*(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\s+(?:мне\s+)?(?:фото|фотографию|картинку|изображение|рисунок|арт)\s*[:\-—]?\s*/i,
+      /^\s*\/(?:img|image|photo|фото|картинка|изображение)(?=$|[\s:—-])\s*[:\-—]?\s*/iu,
       ""
     )
-    .replace(/^\s*(?:нарисуй|нарисовать)\s*/i, "")
     .replace(
-      /^\s*(?:generate|make|create)\s+(?:an?\s+)?(?:image|photo|picture|drawing|art)\s*(?:of)?\s*[:\-—]?\s*/i,
+      /^\s*(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\s+(?:мне\s+)?/iu,
       ""
     )
+    .replace(
+      /^\s*(?:нарисуй|нарисовать)\s+(?:мне\s+)?/iu,
+      ""
+    )
+    .replace(
+      /^\s*(?:generate|make|create)\s+(?:me\s+)?(?:an?\s+)?/iu,
+      ""
+    )
+    .replace(
+      /^\s*(?:фото|фотографию|фотку|картинку|изображение|рисунок|арт)(?:\s*\/\s*(?:фото|фотографию|фотку|картинку|изображение|рисунок|арт))*\s*(?:с|из|of)?\s*[:\-—]?\s*/iu,
+      ""
+    )
+    .replace(
+      /^\s*(?:image|photo|picture|drawing|art)(?:\s*\/\s*(?:image|photo|picture|drawing|art))*\s*(?:of)?\s*[:\-—]?\s*/iu,
+      ""
+    )
+    .replace(/^\/+\s*/, "")
     .trim();
+
+  return prompt;
 }
 
 async function uploadImageToMax(imageBuffer) {
