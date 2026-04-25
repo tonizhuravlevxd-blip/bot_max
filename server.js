@@ -672,7 +672,7 @@ async function handleUpdate(update) {
     return;
   }
 
- try {
+  // Handling the bot started event
   if (updateType === "bot_started") {
     await sendMaxMessage(
       target,
@@ -680,8 +680,6 @@ async function handleUpdate(update) {
     );
     return;
   }
-} catch (error) {
-  console.error("Error handling bot started:", error);
 }
 
     if (updateType !== "message_created") return;
