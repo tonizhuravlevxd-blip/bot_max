@@ -17,7 +17,7 @@ const rateLimiter = rateLimit({
   onLimitReached: (req, res) => {
     // Логирование превышения лимита запросов
     console.warn(`Spam detected: User ${req.userId} exceeded the rate limit.`);
-    sendMaxMessage({ type: "user_id", id: req.userId }, "Вы спамите. Пожалуйста, подождите немного.");
+    sendMaxMessage({ type: "user_id", id: req.userId }, "Может хватит спамить? Пожалуйста,подождите немного😅");
   }
 });
 
