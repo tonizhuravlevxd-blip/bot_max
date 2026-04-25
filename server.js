@@ -509,39 +509,7 @@ async function downloadIncomingImage(url) {
   }
 }
 
-function cleanImagePrompt(text) {
-  let prompt = String(text || "").trim();
 
-  prompt = prompt
-    .replace(
-      /^\s*\/(?:img|image|photo|фото|картинка|изображение)(?=$|[\s:—-])\s*[:\-—]?\s*/iu,
-      ""
-    )
-    .replace(
-      /^\s*(?:сгенерируй|сгенерировать|создай|создать|сделай|сделать|генерируй)\s+(?:мне\s+)?/iu,
-      ""
-    )
-    .replace(
-      /^\s*(?:нарисуй|нарисовать)\s+(?:мне\s+)?/iu,
-      ""
-    )
-    .replace(
-      /^\s*(?:generate|make|create)\s+(?:me\s+)?(?:an?\s+)?/iu,
-      ""
-    )
-    .replace(
-      /^\s*(?:фото|фотографию|фотку|картинку|изображение|рисунок|арт)(?:\s*\/\s*(?:фото|фотографию|фотку|картинку|изображение|рисунок|арт))*\s*(?:с|из|of)?\s*[:\-—]?\s*/iu,
-      ""
-    )
-    .replace(
-      /^\s*(?:image|photo|picture|drawing|art)(?:\s*\/\s*(?:image|photo|picture|drawing|art))*\s*(?:of)?\s*[:\-—]?\s*/iu,
-      ""
-    )
-    .replace(/^\/+\s*/, "")
-    .trim();
-
-  return prompt;
-}
 
 async function uploadImageToMax(imageBuffer) {
   const uploadInfo = await maxRequest("/uploads", {
