@@ -60,6 +60,12 @@ function splitForMax(text, maxLength = 3900) {
   return chunks;
 }
 
+function isImageRequest(userText, hasIncomingImage) {
+  if (hasIncomingImage) return true;
+  const cleanedText = (userText || "").trim();  // Очистка текста от пробелов
+  return IMAGE_REQUEST_RE.test(cleanedText);  // Проверка с новым регулярным выражением
+}  
+
 async function maxRequest(path, options = {}) {
   const url = new URL(`${MAX_API_BASE}${path}`);
 
