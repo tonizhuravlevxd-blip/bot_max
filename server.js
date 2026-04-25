@@ -678,8 +678,10 @@ async function handleUpdate(update) {
       target,
       "👋 <b>Здравствуйте</b>. Напишите вопрос или попросите создать фото/картинку. Например: создай фото кота в космосе."
     );
-    return;
+    return; // This return is now inside the function, so it's valid
   }
+
+  if (updateType !== "message_created") return; // Ensuring the return is inside the function
 }
 
     if (updateType !== "message_created") return;
