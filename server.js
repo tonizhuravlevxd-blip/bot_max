@@ -7,7 +7,7 @@ app.use(express.json({ limit: "10mb" }));
 // Настройка защиты от флуда
 const rateLimiter = rateLimit({
   windowMs: 5 * 1000, // 5 секунд (установить для более короткого окна)
-  max: 5, // Максимум 5 запросов за 5 секунд
+  max: 1, // Максимум 5 запросов за 5 секунд
   message: "Слишком много запросов. Пожалуйста, подождите немного.",
   keyGenerator: (req) => req.userId,
   onLimitReached: (req, res) => {
