@@ -696,7 +696,7 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
   await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
 }
 
-/ Обработчик спама
+
 async function handleSpamWarning(userId) {
   await sendMaxMessage({ type: "user_id", id: userId }, "Вы спамите. Пожалуйста, подождите немного.");
   console.warn(`User ${userId} was warned for spamming.`);
