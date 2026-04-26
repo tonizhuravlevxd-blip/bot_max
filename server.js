@@ -1,33 +1,8 @@
 import express from "express";
-import rateLimit from "express-rate-limit";
+
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
-
-function getUserIdFromUpdate(update) {
-  return update?.message?.sender?.user_id || update?.user?.user_id;
-}
-
-// Настройка защиты от флуда
-const rateLimiter = rateLimit({
-  windowMs: 3 * 1000, // 5 секунд (установить для более короткого окна)
-  max: 1, // Максимум 5 запросов за 5 секунд
-  message: "Слишком много запросов. Пожалуйста, подождите немного.",
-  keyGenerator: (req) => req.userId,
-  onLimitReached: (req, res) => {
-    // Логирование превышения лимита запросов
-    console.warn(`Spam detected: User ${req.userId} exceeded the rate limit.`);
-    sendMaxMessage({ type: "user_id", id: req.userId }, "Может хватит **спамить**? Пожалуйста,подождите немного😅");
-  }
-});
-
-app.use((req, res, next) => {
-  req.userId = getUserIdFromUpdate(req.body); // Извлекаем userId из тела запроса
-  next();
-});
-
-// Используем rate limiter для всех запросов
-app.use(rateLimiter);
 
 const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
@@ -37,6 +12,196 @@ const IMAGE_REQUEST_LIMIT = 8;
 const CHATGPT_REQUEST_LIMIT = 15; 
 
 const userRequestCounts = {};
+
+const FLOOD_WINDOW_MS = Number(process.env.FLOOD_WINDOW_MS || 10_000);
+const FLOOD_MAX_MESSAGES = Number(process.env.FLOOD_MAX_MESSAGES || 5);
+const FLOOD_BLOCK_MS = Number(process.env.FLOOD_BLOCK_MS || 20_000);
+const FLOOD_WARNING_COOLDOWN_MS = Number(process.env.FLOOD_WARNING_COOLDOWN_MS || 12_000);
+
+const SAME_MESSAGE_WINDOW_MS = Number(process.env.SAME_MESSAGE_WINDOW_MS || 20_000);
+const SAME_MESSAGE_MAX = Number(process.env.SAME_MESSAGE_MAX || 3);
+
+const USER_BUSY_TTL_MS = Number(process.env.USER_BUSY_TTL_MS || 5 * 60_000);
+const USER_BUSY_WARNING_COOLDOWN_MS = Number(process.env.USER_BUSY_WARNING_COOLDOWN_MS || 10_000);
+
+const userFloodStates = new Map();
+const userBusyUntil = new Map();
+const userBusyWarningAt = new Map();
+
+function getStableUserId(update, target) {
+  return (
+    update?.message?.sender?.user_id ||
+    update?.user?.user_id ||
+    target?.id ||
+    "unknown"
+  );
+}
+
+function normalizeFloodText(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function checkAntiFlood(userId, textForCheck = "") {
+  const now = Date.now();
+
+  let state = userFloodStates.get(userId);
+
+  if (!state) {
+    state = {
+      windowStart: now,
+      count: 0,
+      blockedUntil: 0,
+      lastWarningAt: 0,
+      lastText: "",
+      lastTextAt: 0,
+      sameTextCount: 0
+    };
+
+    userFloodStates.set(userId, state);
+  }
+
+  if (state.blockedUntil > now) {
+    const canWarn = now - state.lastWarningAt >= FLOOD_WARNING_COOLDOWN_MS;
+
+    if (canWarn) {
+      state.lastWarningAt = now;
+    }
+
+    return {
+      blocked: true,
+      reason: "blocked",
+      retryAfterMs: state.blockedUntil - now,
+      shouldWarn: canWarn
+    };
+  }
+
+  if (now - state.windowStart > FLOOD_WINDOW_MS) {
+    state.windowStart = now;
+    state.count = 0;
+  }
+
+  state.count += 1;
+
+  const normalizedText = normalizeFloodText(textForCheck);
+
+  if (
+    normalizedText &&
+    normalizedText === state.lastText &&
+    now - state.lastTextAt <= SAME_MESSAGE_WINDOW_MS
+  ) {
+    state.sameTextCount += 1;
+  } else {
+    state.lastText = normalizedText;
+    state.lastTextAt = now;
+    state.sameTextCount = normalizedText ? 1 : 0;
+  }
+
+  const tooManyMessages = state.count > FLOOD_MAX_MESSAGES;
+  const tooManySameMessages = state.sameTextCount > SAME_MESSAGE_MAX;
+
+  if (tooManyMessages || tooManySameMessages) {
+    state.blockedUntil = now + FLOOD_BLOCK_MS;
+    state.windowStart = now;
+    state.count = 0;
+
+    const canWarn = now - state.lastWarningAt >= FLOOD_WARNING_COOLDOWN_MS;
+
+    if (canWarn) {
+      state.lastWarningAt = now;
+    }
+
+    return {
+      blocked: true,
+      reason: tooManySameMessages ? "same_message" : "too_many_messages",
+      retryAfterMs: FLOOD_BLOCK_MS,
+      shouldWarn: canWarn
+    };
+  }
+
+  return {
+    blocked: false
+  };
+}
+
+async function sendFloodWarningIfNeeded(target, userId, floodResult) {
+  if (!floodResult?.shouldWarn) return;
+
+  const seconds = Math.ceil((floodResult.retryAfterMs || FLOOD_BLOCK_MS) / 1000);
+
+  console.warn(`Flood detected: user ${userId}, reason: ${floodResult.reason}`);
+
+  await sendMaxMessage(
+    target,
+    `📛 **Вы отправляете сообщения слишком часто.** Подождите примерно ${seconds} сек.`
+  ).catch((error) => {
+    console.error("Failed to send flood warning:", error);
+  });
+}
+
+function isUserBusy(userId) {
+  const now = Date.now();
+  const busyUntil = userBusyUntil.get(userId) || 0;
+
+  if (busyUntil <= now) {
+    userBusyUntil.delete(userId);
+    return false;
+  }
+
+  return true;
+}
+
+function lockUserProcessing(userId) {
+  userBusyUntil.set(userId, Date.now() + USER_BUSY_TTL_MS);
+}
+
+function unlockUserProcessing(userId) {
+  userBusyUntil.delete(userId);
+}
+
+async function sendBusyWarningIfNeeded(target, userId) {
+  const now = Date.now();
+  const lastWarningAt = userBusyWarningAt.get(userId) || 0;
+
+  if (now - lastWarningAt < USER_BUSY_WARNING_COOLDOWN_MS) return;
+
+  userBusyWarningAt.set(userId, now);
+
+  await sendMaxMessage(
+    target,
+    "⏳ Предыдущий запрос ещё обрабатывается. Пожалуйста, дождитесь ответа."
+  ).catch((error) => {
+    console.error("Failed to send busy warning:", error);
+  });
+}
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [userId, state] of userFloodStates.entries()) {
+    const inactiveTooLong =
+      now - state.windowStart > 60 * 60_000 &&
+      state.blockedUntil <= now;
+
+    if (inactiveTooLong) {
+      userFloodStates.delete(userId);
+    }
+  }
+
+  for (const [userId, busyUntil] of userBusyUntil.entries()) {
+    if (busyUntil <= now) {
+      userBusyUntil.delete(userId);
+    }
+  }
+
+  for (const [userId, lastWarningAt] of userBusyWarningAt.entries()) {
+    if (now - lastWarningAt > 60 * 60_000) {
+      userBusyWarningAt.delete(userId);
+    }
+  }
+}, 10 * 60_000).unref?.();
 
 function getUserRequestKey(userId) {
   return userId; // Можно использовать любой идентификатор пользователя (например, userId или chatId)
@@ -667,9 +832,8 @@ function safeUserError(error) {
   return "Произошла ошибка при обработке запроса.";
 }
 
-async function handleImageRequest(update, target, userText, incomingImageUrl) {
-  const userId = target.id;
 
+  async function handleImageRequest(update, target, userText, incomingImageUrl, userId = target.id) {
   const prompt = String(userText || "").trim();
 
   if (!prompt) {
@@ -680,7 +844,6 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
     return;
   }
 
-  // Проверяем только лимит изображений
   if (isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
     await sendMaxMessage(
       target,
@@ -689,7 +852,6 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
     return;
   }
 
-  // Увеличиваем лимит изображений только после проверки промта и лимита
   incrementRequestCount(userId, "images");
 
   const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
@@ -711,11 +873,14 @@ async function handleUpdate(update) {
   const updateType = update?.update_type;
   const target = getReplyTarget(update);
   let status = null;
+  let processingLocked = false;
 
   if (!target) {
     console.log("No reply target in update:", JSON.stringify(update));
     return;
   }
+
+  const userId = getStableUserId(update, target);
 
   try {
     if (updateType === "bot_started") {
@@ -730,9 +895,16 @@ async function handleUpdate(update) {
 
     const userText = getIncomingText(update);
     const incomingImageUrl = extractIncomingImageUrl(update);
-    const userId = target.id;
 
-    // Команда /start не должна тратить лимиты
+    const floodCheckText = `${userText || ""} ${incomingImageUrl ? "[image]" : ""}`;
+
+    const floodResult = checkAntiFlood(userId, floodCheckText);
+
+    if (floodResult.blocked) {
+      await sendFloodWarningIfNeeded(target, userId, floodResult);
+      return;
+    }
+
     if (userText === "/start") {
       await sendMaxMessage(
         target,
@@ -741,7 +913,6 @@ async function handleUpdate(update) {
       return;
     }
 
-    // Простая защита от текста spam
     if (userText.toLowerCase().includes("spam")) {
       await sendMaxMessage(
         target,
@@ -750,7 +921,6 @@ async function handleUpdate(update) {
       return;
     }
 
-    // Если пришло фото без текста
     if (!userText && incomingImageUrl) {
       await sendMaxMessage(
         target,
@@ -759,7 +929,6 @@ async function handleUpdate(update) {
       return;
     }
 
-    // Если вообще нет текста
     if (!userText) {
       await sendMaxMessage(
         target,
@@ -768,21 +937,24 @@ async function handleUpdate(update) {
       return;
     }
 
-    // ВАЖНО:
-    // Сначала проверяем, является ли запрос запросом на изображение.
-    // Если да — лимит ChatGPT не трогаем.
+    if (isUserBusy(userId)) {
+      await sendBusyWarningIfNeeded(target, userId);
+      return;
+    }
+
+    lockUserProcessing(userId);
+    processingLocked = true;
+
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
       status = await startDynamicStatus(target, "👽Шедевр создается");
 
-      await handleImageRequest(update, target, userText, incomingImageUrl);
+      await handleImageRequest(update, target, userText, incomingImageUrl, userId);
 
       await status.stop();
       status = null;
       return;
     }
 
-    // Только здесь начинается обычный ChatGPT-запрос.
-    // Проверяем только лимит ChatGPT.
     if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
       await sendMaxMessage(
         target,
@@ -791,7 +963,6 @@ async function handleUpdate(update) {
       return;
     }
 
-    // Увеличиваем счётчик ChatGPT только для обычного текстового запроса
     incrementRequestCount(userId, "chatgpt");
 
     status = await startDynamicStatus(target, "💬ИИ думает");
@@ -814,6 +985,10 @@ async function handleUpdate(update) {
     await sendMaxMessage(target, safeUserError(error)).catch((sendError) => {
       console.error("Failed to send error message to MAX:", sendError);
     });
+  } finally {
+    if (processingLocked) {
+      unlockUserProcessing(userId);
+    }
   }
 }
 
