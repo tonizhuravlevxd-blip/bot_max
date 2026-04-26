@@ -53,7 +53,9 @@ const userBusyWarningAt = new Map();
 function getStableUserId(update, target) {
   return (
     update?.message?.sender?.user_id ||
+    update?.callback?.user?.user_id ||
     update?.user?.user_id ||
+    update?.user_id ||
     target?.id ||
     "unknown"
   );
@@ -397,23 +399,82 @@ function getIncomingText(update) {
 }
 
 function getCallbackPayload(update) {
-  return (
-    update?.payload ||
+  return String(
     update?.callback?.payload ||
+    update?.payload ||
     update?.button?.payload ||
     update?.message?.body?.payload ||
     ""
+  ).trim();
+}
+
+function getCallbackId(update) {
+  return String(
+    update?.callback?.callback_id ||
+    update?.callback?.id ||
+    update?.callback_id ||
+    ""
+  ).trim();
+}
+
+function isSubscriptionCheckPayload(payload) {
+  const value = String(payload || "").trim();
+
+  return (
+    value === SUBSCRIPTION_CHECK_PAYLOAD ||
+    value.startsWith(`${SUBSCRIPTION_CHECK_PAYLOAD}:`)
   );
+}
+
+function getUserIdFromSubscriptionPayload(payload) {
+  const value = String(payload || "").trim();
+
+  if (!value.startsWith(`${SUBSCRIPTION_CHECK_PAYLOAD}:`)) {
+    return "";
+  }
+
+  return value.slice(`${SUBSCRIPTION_CHECK_PAYLOAD}:`.length).trim();
 }
 
 function getReplyTarget(update) {
   const message = update?.message;
   const recipient = message?.recipient;
 
-  if (recipient?.chat_id) return { type: "chat_id", id: recipient.chat_id };
-  if (message?.sender?.user_id) return { type: "user_id", id: message.sender.user_id };
-  if (update?.chat_id) return { type: "chat_id", id: update.chat_id };
-  if (update?.user?.user_id) return { type: "user_id", id: update.user.user_id };
+  if (recipient?.chat_id) {
+    return { type: "chat_id", id: recipient.chat_id };
+  }
+
+  if (message?.sender?.user_id) {
+    return { type: "user_id", id: message.sender.user_id };
+  }
+
+  const callback = update?.callback;
+  const callbackMessage = callback?.message;
+  const callbackRecipient = callbackMessage?.recipient;
+
+  if (callbackRecipient?.chat_id) {
+    return { type: "chat_id", id: callbackRecipient.chat_id };
+  }
+
+  if (callback?.user?.user_id) {
+    return { type: "user_id", id: callback.user.user_id };
+  }
+
+  if (callbackMessage?.sender?.user_id) {
+    return { type: "user_id", id: callbackMessage.sender.user_id };
+  }
+
+  if (update?.chat_id) {
+    return { type: "chat_id", id: update.chat_id };
+  }
+
+  if (update?.user?.user_id) {
+    return { type: "user_id", id: update.user.user_id };
+  }
+
+  if (update?.user_id) {
+    return { type: "user_id", id: update.user_id };
+  }
 
   return null;
 }
@@ -483,6 +544,41 @@ async function maxRequest(path, options = {}) {
   return body;
 }
 
+async function answerMaxCallback(callbackId, notification = "") {
+  if (!callbackId) return;
+
+  try {
+    await maxRequest("/answers", {
+      method: "POST",
+      query: {
+        callback_id: callbackId
+      },
+      body: {
+        notification: notification || null
+      }
+    });
+
+    return;
+  } catch (firstError) {
+    try {
+      await maxRequest("/answers", {
+        method: "POST",
+        body: {
+          callback_id: callbackId,
+          notification: notification || null
+        }
+      });
+
+      return;
+    } catch (secondError) {
+      console.warn(
+        "Failed to answer MAX callback:",
+        secondError?.message || secondError
+      );
+    }
+  }
+}
+
 async function sendMaxSingleMessage(target, text, notify = true) {
   return maxRequest("/messages", {
     method: "POST",
@@ -519,10 +615,12 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
   });
 }
 
-async function sendSubscriptionPrompt(target, prefixText = "") {
+async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
     "🔒 Чтобы продолжить пользоваться ботом сверх бесплатного лимита, подпишитесь на наш канал и нажмите кнопку **Проверить**.";
+
+  const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
 
   const attachments = [
     {
@@ -540,7 +638,8 @@ async function sendSubscriptionPrompt(target, prefixText = "") {
             {
               type: "callback",
               text: "✅ Проверить",
-              payload: SUBSCRIPTION_CHECK_PAYLOAD
+              payload: checkPayload,
+              intent: "positive"
             }
           ]
         ]
@@ -551,11 +650,14 @@ async function sendSubscriptionPrompt(target, prefixText = "") {
   try {
     await sendMaxMessageWithAttachments(target, text, attachments);
   } catch (error) {
-    console.warn("Failed to send subscription buttons, fallback to text:", error?.message || error);
+    console.warn(
+      "Failed to send subscription buttons, fallback to text:",
+      error?.message || error
+    );
 
     await sendMaxMessage(
       target,
-      `${text}\n\n📢 Канал: ${REQUIRED_CHANNEL_URL}\n\nПосле подписки отправьте команду: /check_sub`
+      `${text}\n\n📢 Канал: ${REQUIRED_CHANNEL_URL}\n\nПосле подписки отправьте команду: /проверить`
     );
   }
 }
@@ -629,13 +731,16 @@ async function handleSubscriptionCheck(target, userId) {
       "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом."
     );
 
-    return;
+    return true;
   }
 
   await sendSubscriptionPrompt(
     target,
+    userId,
     "❌ Пока не вижу подписку на канал."
   );
+
+  return false;
 }
 
 function extractMaxMessageId(result) {
@@ -1125,6 +1230,7 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
   if (isSubscriptionRequiredForRequest(userId, "images")) {
     await sendSubscriptionPrompt(
       target,
+      userId,
       `Вы уже создали ${IMAGE_REQUESTS_BEFORE_SUBSCRIPTION} фото бесплатно.`
     );
     return;
@@ -1147,6 +1253,8 @@ async function handleUpdate(update) {
   let status = null;
   let processingLocked = false;
 
+  console.log("Incoming update type:", updateType);
+
   if (!target) {
     console.log("No reply target in update:", JSON.stringify(update));
     return;
@@ -1165,14 +1273,20 @@ async function handleUpdate(update) {
 
     const userText = getIncomingText(update);
     const callbackPayload = getCallbackPayload(update);
+    const callbackId = getCallbackId(update);
     const incomingImageUrl = extractIncomingImageUrl(update);
 
     if (
-      callbackPayload === SUBSCRIPTION_CHECK_PAYLOAD ||
+      isSubscriptionCheckPayload(callbackPayload) ||
       userText.toLowerCase() === "/check_sub" ||
       userText.toLowerCase() === "/проверить"
     ) {
-      await handleSubscriptionCheck(target, userId);
+      await answerMaxCallback(callbackId, "Проверяю подписку...");
+
+      const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
+      const checkUserId = userIdFromPayload || userId;
+
+      await handleSubscriptionCheck(target, checkUserId);
       return;
     }
 
@@ -1205,7 +1319,6 @@ async function handleUpdate(update) {
 
       return;
     }
-    
 
     if (userText.toLowerCase().includes("spam")) {
       await sendMaxMessage(
@@ -1260,6 +1373,7 @@ async function handleUpdate(update) {
     if (isSubscriptionRequiredForRequest(userId, "chatgpt")) {
       await sendSubscriptionPrompt(
         target,
+        userId,
         `Вы уже использовали ${CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION} текстовых запроса бесплатно.`
       );
       return;
