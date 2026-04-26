@@ -305,7 +305,7 @@ function resetDailyLimits() {
   }, 86400000); // Сбрасываем каждый день (86400000 мс)
 }
 
-const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-5.4";
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
 const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "medium";
@@ -918,8 +918,7 @@ function safeUserError(error) {
   return "Произошла ошибка при обработке запроса.";
 }
 
-
-  async function handleImageRequest(update, target, userText, incomingImageUrl, userId = target.id) {
+async function handleImageRequest(update, target, userText, incomingImageUrl, userId = target.id) {
   const prompt = String(userText || "").trim();
 
   if (!prompt) {
@@ -947,12 +946,6 @@ function safeUserError(error) {
     : await generateOpenAIImage(prompt);
 
   await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
-}
-
-
-async function handleSpamWarning(userId) {
-  await sendMaxMessage({ type: "user_id", id: userId }, "📛**Вы спамите**. Пожалуйста, подождите немного.Система может **заблокировать** вас🙈");
-  console.warn(`User ${userId} was warned for spamming.`);
 }
 
 async function handleUpdate(update) {
