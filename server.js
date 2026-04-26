@@ -33,8 +33,8 @@ const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const IMAGE_REQUEST_LIMIT = 5; 
-const CHATGPT_REQUEST_LIMIT = 10; 
+const IMAGE_REQUEST_LIMIT = 8; 
+const CHATGPT_REQUEST_LIMIT = 15; 
 
 const userRequestCounts = {};
 
