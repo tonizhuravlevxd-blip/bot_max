@@ -21,7 +21,7 @@ const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
 );
 
 // ID канала/чата MAX, где нужно проверить подписку
-const REQUIRED_CHANNEL_ID = process.env.REQUIRED_CHANNEL_ID || "73970192098593";
+const REQUIRED_CHANNEL_ID = process.env.REQUIRED_CHANNEL_ID || "-73970192098593";
 
 // Ссылка на канал для кнопки "Подписаться"
 const REQUIRED_CHANNEL_URL =
