@@ -668,17 +668,9 @@ function safeUserError(error) {
 }
 
 async function handleImageRequest(update, target, userText, incomingImageUrl) {
-  const userId = target.id; // Или извлекайте из отправителя сообщения и т.д.
+  const userId = target.id;
 
-  // Проверка лимита на запросы изображений
-  if (isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
-    await sendMaxMessage(target, "🥱Вы достигли лимита на создание **Шедевров** сегодня,приходите позже и продолжайте");
-    return;
-  }
-
-  incrementRequestCount(userId, "images"); 
-
-  const prompt = userText.trim();
+  const prompt = String(userText || "").trim();
 
   if (!prompt) {
     await sendMaxMessage(
@@ -687,6 +679,18 @@ async function handleImageRequest(update, target, userText, incomingImageUrl) {
     );
     return;
   }
+
+  // Проверяем только лимит изображений
+  if (isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
+    await sendMaxMessage(
+      target,
+      "🥱Вы достигли лимита на создание **Шедевров** сегодня, приходите позже и продолжайте"
+    );
+    return;
+  }
+
+  // Увеличиваем лимит изображений только после проверки промта и лимита
+  incrementRequestCount(userId, "images");
 
   const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
 
@@ -726,45 +730,9 @@ async function handleUpdate(update) {
 
     const userText = getIncomingText(update);
     const incomingImageUrl = extractIncomingImageUrl(update);
-    const userId = target.id; // Идентификатор пользователя для проверки лимитов
+    const userId = target.id;
 
-    if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
-      await sendMaxMessage(target, "Кажется вам надо немного отдохнуть от ИИ🏝️,**Приходите чуть позже и продолжайте**🦦");
-      return;
-    }
-
-    // Увеличиваем счетчик запросов ChatGPT
-    incrementRequestCount(userId, "chatgpt");
-
-    // Если текст пустой или спам, игнорируем запрос
-    if (userText.includes("spam")) {
-      await sendMaxMessage(target, "**Это уже не смешно🥺.Стоп спам,пожалуйста😢**.");
-      return;
-    }
-
-    // Спам: Превышение лимита запросов
-    if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
-      console.warn(`Spam detected: User ${userId} exceeded the rate limit.`);
-      await sendMaxMessage(target, "Вы спамите. Пожалуйста, подождите немного.");
-      return;
-    }
-
-    if (!userText && incomingImageUrl) {
-      await sendMaxMessage(
-        target,
-        "Фото получил. Теперь отправьте его вместе с текстом, что нужно изменить или создать на его основе."
-      );
-      return;
-    }
-
-    if (!userText) {
-      await sendMaxMessage(
-        target,
-        "Я пока умею отвечать на текст, а также создавать изображения по запросам вроде: создай фото кота в космосе."
-      );
-      return;
-    }
-
+    // Команда /start не должна тратить лимиты
     if (userText === "/start") {
       await sendMaxMessage(
         target,
@@ -773,16 +741,63 @@ async function handleUpdate(update) {
       return;
     }
 
+    // Простая защита от текста spam
+    if (userText.toLowerCase().includes("spam")) {
+      await sendMaxMessage(
+        target,
+        "**Это уже не смешно🥺. Стоп спам, пожалуйста😢**."
+      );
+      return;
+    }
+
+    // Если пришло фото без текста
+    if (!userText && incomingImageUrl) {
+      await sendMaxMessage(
+        target,
+        "Фото получил. Теперь отправьте его вместе с текстом, что нужно изменить или создать на его основе."
+      );
+      return;
+    }
+
+    // Если вообще нет текста
+    if (!userText) {
+      await sendMaxMessage(
+        target,
+        "Я пока умею отвечать на текст, а также создавать изображения по запросам вроде: создай фото кота в космосе."
+      );
+      return;
+    }
+
+    // ВАЖНО:
+    // Сначала проверяем, является ли запрос запросом на изображение.
+    // Если да — лимит ChatGPT не трогаем.
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
       status = await startDynamicStatus(target, "👽Шедевр создается");
+
       await handleImageRequest(update, target, userText, incomingImageUrl);
+
       await status.stop();
       status = null;
       return;
     }
 
+    // Только здесь начинается обычный ChatGPT-запрос.
+    // Проверяем только лимит ChatGPT.
+    if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
+      await sendMaxMessage(
+        target,
+        "Кажется вам надо немного отдохнуть от ИИ🏝️, **приходите чуть позже и продолжайте**🦦"
+      );
+      return;
+    }
+
+    // Увеличиваем счётчик ChatGPT только для обычного текстового запроса
+    incrementRequestCount(userId, "chatgpt");
+
     status = await startDynamicStatus(target, "💬ИИ думает");
+
     const answer = await askOpenAI(userText);
+
     await status.stop();
     status = null;
 
