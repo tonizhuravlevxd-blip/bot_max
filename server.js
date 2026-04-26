@@ -701,26 +701,174 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   }
 }
 
-function isPositiveMembershipResponse(body) {
-  if (!body) return false;
+function toMaxUserIdValue(userId) {
+  const text = String(userId || "").trim();
+  const numberValue = Number(text);
+
+  if (Number.isSafeInteger(numberValue)) {
+    return numberValue;
+  }
+
+  return text;
+}
+
+function extractMembersFromMaxResponse(body) {
+  if (!body) return [];
+
+  const candidates = [
+    body.members,
+    body.items,
+    body.users,
+    body.chat_members,
+    body.chatMembers,
+    body.data,
+    body.result?.members,
+    body.result?.items,
+    body.result?.users,
+    body.payload?.members,
+    body.payload?.items,
+    body.payload?.users,
+    body.response?.members,
+    body.response?.items,
+    body.response?.users
+  ];
+
+  for (const candidate of candidates) {
+    if (Array.isArray(candidate)) {
+      return candidate;
+    }
+  }
+
+  if (Array.isArray(body)) {
+    return body;
+  }
+
+  return [];
+}
+
+function getMemberUserId(member) {
+  return (
+    member?.user_id ||
+    member?.userId ||
+    member?.id ||
+    member?.user?.user_id ||
+    member?.user?.userId ||
+    member?.user?.id ||
+    member?.member?.user_id ||
+    member?.member?.userId ||
+    member?.member?.id ||
+    member?.profile?.user_id ||
+    member?.profile?.userId ||
+    member?.profile?.id ||
+    ""
+  );
+}
+
+function isMemberActive(member) {
+  if (!member) return false;
 
   const status = String(
-    body?.status ||
-    body?.membership?.status ||
-    body?.member?.status ||
-    body?.role ||
+    member?.status ||
+    member?.membership?.status ||
+    member?.member?.status ||
+    member?.role ||
+    member?.permissions?.role ||
     ""
   ).toLowerCase();
 
-  if (["member", "administrator", "admin", "owner", "creator"].includes(status)) {
+  const negativeStatuses = [
+    "left",
+    "leave",
+    "kicked",
+    "banned",
+    "blocked",
+    "not_member",
+    "not_found",
+    "none",
+    "deleted"
+  ];
+
+  if (negativeStatuses.includes(status)) {
+    return false;
+  }
+
+  const positiveStatuses = [
+    "member",
+    "administrator",
+    "admin",
+    "owner",
+    "creator",
+    "subscriber",
+    "subscribed"
+  ];
+
+  if (positiveStatuses.includes(status)) {
     return true;
   }
 
-  if (body?.is_member === true || body?.subscribed === true) {
+  if (
+    member?.is_member === true ||
+    member?.isMember === true ||
+    member?.subscribed === true ||
+    member?.is_subscriber === true ||
+    member?.isSubscriber === true
+  ) {
     return true;
   }
 
-  if (body?.user_id || body?.user?.user_id || body?.member?.user_id) {
+  if (
+    member?.is_member === false ||
+    member?.isMember === false ||
+    member?.subscribed === false ||
+    member?.is_subscriber === false ||
+    member?.isSubscriber === false
+  ) {
+    return false;
+  }
+
+  // Если MAX вернул объект участника с user_id и нет отрицательного статуса,
+  // считаем, что пользователь найден среди участников/подписчиков.
+  return Boolean(getMemberUserId(member));
+}
+
+function responseContainsActiveUser(body, userId) {
+  const expectedUserId = String(userId);
+
+  const members = extractMembersFromMaxResponse(body);
+
+  for (const member of members) {
+    const memberUserId = String(getMemberUserId(member));
+
+    if (memberUserId === expectedUserId && isMemberActive(member)) {
+      return true;
+    }
+  }
+
+  // Вариант, если API вернул одного пользователя объектом
+  const singleUserId = String(getMemberUserId(body));
+
+  if (singleUserId === expectedUserId && isMemberActive(body)) {
+    return true;
+  }
+
+  // Вариант, если API вернул объект-словарь:
+  // { "277993084": { ... } }
+  const directValue = body?.[expectedUserId];
+
+  if (directValue && typeof directValue === "object") {
+    return isMemberActive(directValue);
+  }
+
+  // Вариант, если API вернул:
+  // { found: true } / { is_member: true } / { subscribed: true }
+  if (
+    body?.found === true ||
+    body?.is_member === true ||
+    body?.isMember === true ||
+    body?.subscribed === true ||
+    body?.is_subscriber === true ||
+    body?.isSubscriber === true
+  ) {
     return true;
   }
 
@@ -735,25 +883,61 @@ async function checkRequiredChannelSubscription(userId) {
     return false;
   }
 
-  try {
-    const channelId = encodeURIComponent(REQUIRED_CHANNEL_ID);
-    const encodedUserId = encodeURIComponent(userId);
+  const channelId = encodeURIComponent(REQUIRED_CHANNEL_ID);
+  const maxUserId = toMaxUserIdValue(userId);
 
+  try {
     /*
       ВАЖНО:
-      Если в MAX API у вашего проекта другой endpoint проверки участника,
-      нужно будет поменять только эту строку.
+      Старый вариант GET /chats/{chatId}/members/{userId} не работает.
+      MAX возвращает method.not.found.
+
+      Используем batch-проверку через POST /chats/{chatId}/members
+      с телом { userIds: [...] }.
     */
-    const result = await maxRequest(`/chats/${channelId}/members/${encodedUserId}`, {
-      method: "GET"
+
+    const result = await maxRequest(`/chats/${channelId}/members`, {
+      method: "POST",
+      body: {
+        userIds: [maxUserId]
+      }
     });
 
-    return isPositiveMembershipResponse(result);
+    console.log(
+      `Subscription check response for user ${userId}:`,
+      JSON.stringify(result).slice(0, 2000)
+    );
+
+    const isSubscribed = responseContainsActiveUser(result, userId);
+
+    console.log(
+      `Subscription check result for user ${userId}:`,
+      isSubscribed
+    );
+
+    return isSubscribed;
   } catch (error) {
+    const message = String(error?.message || error);
+
     console.warn(
       `Subscription check failed for user ${userId}:`,
-      error?.message || error
+      message
     );
+
+    if (/Method is not available for dialogs/i.test(message)) {
+      console.warn(
+        "MAX says: Method is not available for dialogs. " +
+        "Это значит, что REQUIRED_CHANNEL_ID сейчас определяется API как dialog. " +
+        "Нужен внутренний channel/chat_id канала, доступный Bot API."
+      );
+    }
+
+    if (/Field 'userIds' cannot be null/i.test(message)) {
+      console.warn(
+        "MAX says: Field 'userIds' cannot be null. " +
+        "Проверь, что запрос отправляется именно методом POST и body содержит { userIds: [userId] }."
+      );
+    }
 
     return false;
   }
