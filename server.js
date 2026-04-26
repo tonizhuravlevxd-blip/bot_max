@@ -203,6 +203,83 @@ setInterval(() => {
   }
 }, 10 * 60_000).unref?.();
 
+
+const CONTEXT_MAX_REQUESTS = Number(process.env.CONTEXT_MAX_REQUESTS || 3);
+const CONTEXT_MAX_TEXT_CHARS = Number(process.env.CONTEXT_MAX_TEXT_CHARS || 3000);
+const CONTEXT_TTL_MS = Number(process.env.CONTEXT_TTL_MS || 30 * 60_000);
+
+const userChatContexts = new Map();
+
+function clipForContext(text) {
+  return String(text || "").slice(0, CONTEXT_MAX_TEXT_CHARS);
+}
+
+function getChatContext(userId) {
+  const key = String(userId || "unknown");
+  const context = userChatContexts.get(key);
+
+  if (!context) return [];
+
+  const now = Date.now();
+
+  if (now - context.updatedAt > CONTEXT_TTL_MS) {
+    userChatContexts.delete(key);
+    return [];
+  }
+
+  return context.messages || [];
+}
+
+function rememberChatTurn(userId, userText, assistantText) {
+  const key = String(userId || "unknown");
+
+  let context = userChatContexts.get(key);
+
+  if (!context) {
+    context = {
+      requestCount: 0,
+      messages: [],
+      updatedAt: Date.now()
+    };
+  }
+
+  context.requestCount += 1;
+  context.updatedAt = Date.now();
+
+  context.messages.push({
+    role: "user",
+    content: clipForContext(userText)
+  });
+
+  context.messages.push({
+    role: "assistant",
+    content: clipForContext(assistantText)
+  });
+
+  // После 3 запросов контекст полностью забывается
+  if (context.requestCount >= CONTEXT_MAX_REQUESTS) {
+    userChatContexts.delete(key);
+    return;
+  }
+
+  userChatContexts.set(key, context);
+}
+
+function clearChatContext(userId) {
+  const key = String(userId || "unknown");
+  userChatContexts.delete(key);
+}
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [userId, context] of userChatContexts.entries()) {
+    if (now - context.updatedAt > CONTEXT_TTL_MS) {
+      userChatContexts.delete(userId);
+    }
+  }
+}, 10 * 60_000).unref?.();
+
 function getUserRequestKey(userId) {
   return userId; // Можно использовать любой идентификатор пользователя (например, userId или chatId)
 }
@@ -487,7 +564,9 @@ function extractOpenAIText(data) {
   return parts.join("\n").trim();
 }
 
-async function askOpenAI(userText) {
+async function askOpenAI(userId, userText) {
+  const history = getChatContext(userId);
+
   const response = await fetch(`${OPENAI_API_BASE}/responses`, {
     method: "POST",
     headers: {
@@ -502,6 +581,7 @@ async function askOpenAI(userText) {
           content:
             "Ты полезный ассистент внутри мессенджера MAX. Отвечай кратко, ясно и по делу. Если вопрос требует пошагового ответа, структурируй ответ простыми абзацами."
         },
+        ...history,
         {
           role: "user",
           content: userText
@@ -516,7 +596,13 @@ async function askOpenAI(userText) {
     throw new Error(`OpenAI API ${response.status}: ${JSON.stringify(data)}`);
   }
 
-  return extractOpenAIText(data) || "Я получил сообщение, но не смог сформировать ответ.";
+  const answer =
+    extractOpenAIText(data) ||
+    "Я получил сообщение, но не смог сформировать ответ.";
+
+  rememberChatTurn(userId, userText, answer);
+
+  return answer;
 }
 
 function extractImageBase64(data) {
@@ -913,6 +999,18 @@ async function handleUpdate(update) {
       return;
     }
 
+    if (["/reset", "/new", "/clear", "/сброс"].includes(userText.toLowerCase())) {
+      clearChatContext(userId);
+
+      await sendMaxMessage(
+        target,
+        "🧹 Контекст диалога очищен. Можем начать заново."
+      );
+
+      return;
+    }
+    
+
     if (userText.toLowerCase().includes("spam")) {
       await sendMaxMessage(
         target,
@@ -967,7 +1065,7 @@ async function handleUpdate(update) {
 
     status = await startDynamicStatus(target, "💬ИИ думает");
 
-    const answer = await askOpenAI(userText);
+    const answer = await askOpenAI(userId, userText);
 
     await status.stop();
     status = null;
