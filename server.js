@@ -659,7 +659,9 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     `${prefixText ? `${prefixText}\n\n` : ""}` +
     "🔒 Чтобы продолжить пользоваться ботом сверх бесплатного лимита, подпишитесь на наш канал и нажмите кнопку **Проверить**.";
 
-  const checkPayload = SUBSCRIPTION_CHECK_PAYLOAD;
+  // ВАЖНО: кладём userId в payload, чтобы при callback проверять именно пользователя,
+  // а не бота или чат.
+  const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
 
   const attachments = [
     {
@@ -678,7 +680,6 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
               type: "callback",
               text: "✅ Проверить",
               payload: checkPayload
-              
             }
           ]
         ]
@@ -701,16 +702,9 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   }
 }
 
-function toMaxUserIdValue(userId) {
-  const text = String(userId || "").trim();
-  const numberValue = Number(text);
 
-  if (Number.isSafeInteger(numberValue)) {
-    return numberValue;
-  }
 
-  return text;
-}
+
 
 function extractMembersFromMaxResponse(body) {
   if (!body) return [];
@@ -719,18 +713,22 @@ function extractMembersFromMaxResponse(body) {
     body.members,
     body.items,
     body.users,
+    body.subscribers,
     body.chat_members,
     body.chatMembers,
     body.data,
     body.result?.members,
     body.result?.items,
     body.result?.users,
+    body.result?.subscribers,
     body.payload?.members,
     body.payload?.items,
     body.payload?.users,
+    body.payload?.subscribers,
     body.response?.members,
     body.response?.items,
-    body.response?.users
+    body.response?.users,
+    body.response?.subscribers
   ];
 
   for (const candidate of candidates) {
@@ -772,7 +770,6 @@ function isMemberActive(member) {
     member?.membership?.status ||
     member?.member?.status ||
     member?.role ||
-    member?.permissions?.role ||
     ""
   ).toLowerCase();
 
@@ -792,30 +789,6 @@ function isMemberActive(member) {
     return false;
   }
 
-  const positiveStatuses = [
-    "member",
-    "administrator",
-    "admin",
-    "owner",
-    "creator",
-    "subscriber",
-    "subscribed"
-  ];
-
-  if (positiveStatuses.includes(status)) {
-    return true;
-  }
-
-  if (
-    member?.is_member === true ||
-    member?.isMember === true ||
-    member?.subscribed === true ||
-    member?.is_subscriber === true ||
-    member?.isSubscriber === true
-  ) {
-    return true;
-  }
-
   if (
     member?.is_member === false ||
     member?.isMember === false ||
@@ -826,14 +799,13 @@ function isMemberActive(member) {
     return false;
   }
 
-  // Если MAX вернул объект участника с user_id и нет отрицательного статуса,
-  // считаем, что пользователь найден среди участников/подписчиков.
+  // В ответе MAX из Postman у участников нет status, но есть user_id.
+  // Поэтому если user_id есть и нет отрицательного статуса — считаем участником/подписчиком.
   return Boolean(getMemberUserId(member));
 }
 
 function responseContainsActiveUser(body, userId) {
   const expectedUserId = String(userId);
-
   const members = extractMembersFromMaxResponse(body);
 
   for (const member of members) {
@@ -844,35 +816,22 @@ function responseContainsActiveUser(body, userId) {
     }
   }
 
-  // Вариант, если API вернул одного пользователя объектом
-  const singleUserId = String(getMemberUserId(body));
-
-  if (singleUserId === expectedUserId && isMemberActive(body)) {
-    return true;
-  }
-
-  // Вариант, если API вернул объект-словарь:
-  // { "277993084": { ... } }
-  const directValue = body?.[expectedUserId];
-
-  if (directValue && typeof directValue === "object") {
-    return isMemberActive(directValue);
-  }
-
-  // Вариант, если API вернул:
-  // { found: true } / { is_member: true } / { subscribed: true }
-  if (
-    body?.found === true ||
-    body?.is_member === true ||
-    body?.isMember === true ||
-    body?.subscribed === true ||
-    body?.is_subscriber === true ||
-    body?.isSubscriber === true
-  ) {
-    return true;
-  }
-
   return false;
+}
+
+function getNextMembersMarker(body) {
+  return String(
+    body?.marker ||
+    body?.next_marker ||
+    body?.nextMarker ||
+    body?.pagination?.marker ||
+    body?.pagination?.next_marker ||
+    body?.result?.marker ||
+    body?.result?.next_marker ||
+    body?.payload?.marker ||
+    body?.payload?.next_marker ||
+    ""
+  ).trim();
 }
 
 async function checkRequiredChannelSubscription(userId) {
@@ -884,38 +843,72 @@ async function checkRequiredChannelSubscription(userId) {
   }
 
   const channelId = encodeURIComponent(REQUIRED_CHANNEL_ID);
-  const maxUserId = toMaxUserIdValue(userId);
+  const expectedUserId = String(userId);
 
   try {
     /*
-      ВАЖНО:
-      Старый вариант GET /chats/{chatId}/members/{userId} не работает.
-      MAX возвращает method.not.found.
+      Рабочий вариант по твоему Postman:
+      GET /chats/-73970192098593/members
 
-      Используем batch-проверку через POST /chats/{chatId}/members
-      с телом { userIds: [...] }.
+      Ответ:
+      {
+        "members": [
+          { "user_id": 282278177, ... }
+        ]
+      }
+
+      Поэтому получаем список members и ищем нужный user_id.
     */
 
-    const result = await maxRequest(`/chats/${channelId}/members`, {
-      method: "POST",
-      body: {
-        userIds: [maxUserId]
+    let marker = "";
+    let page = 0;
+    const maxPages = 20;
+
+    while (page < maxPages) {
+      page += 1;
+
+      const query = {};
+
+      if (marker) {
+        query.marker = marker;
       }
-    });
 
-    console.log(
-      `Subscription check response for user ${userId}:`,
-      JSON.stringify(result).slice(0, 2000)
-    );
+      console.log(
+        "Outgoing subscription check:",
+        JSON.stringify({
+          method: "GET",
+          path: `/chats/${channelId}/members`,
+          query,
+          expectedUserId
+        })
+      );
 
-    const isSubscribed = responseContainsActiveUser(result, userId);
+      const result = await maxRequest(`/chats/${channelId}/members`, {
+        method: "GET",
+        query
+      });
 
-    console.log(
-      `Subscription check result for user ${userId}:`,
-      isSubscribed
-    );
+      console.log(
+        `Subscription check response page ${page} for user ${userId}:`,
+        JSON.stringify(result).slice(0, 3000)
+      );
 
-    return isSubscribed;
+      if (responseContainsActiveUser(result, expectedUserId)) {
+        console.log(`Subscription check result for user ${userId}: true`);
+        return true;
+      }
+
+      const nextMarker = getNextMembersMarker(result);
+
+      if (!nextMarker || nextMarker === marker) {
+        break;
+      }
+
+      marker = nextMarker;
+    }
+
+    console.log(`Subscription check result for user ${userId}: false`);
+    return false;
   } catch (error) {
     const message = String(error?.message || error);
 
@@ -924,18 +917,15 @@ async function checkRequiredChannelSubscription(userId) {
       message
     );
 
-    if (/Method is not available for dialogs/i.test(message)) {
+    if (/method\.not\.found/i.test(message)) {
       console.warn(
-        "MAX says: Method is not available for dialogs. " +
-        "Это значит, что REQUIRED_CHANNEL_ID сейчас определяется API как dialog. " +
-        "Нужен внутренний channel/chat_id канала, доступный Bot API."
+        "MAX endpoint не найден. Проверь, что используется GET /chats/{channelId}/members."
       );
     }
 
-    if (/Field 'userIds' cannot be null/i.test(message)) {
+    if (/Method is not available for dialogs/i.test(message)) {
       console.warn(
-        "MAX says: Field 'userIds' cannot be null. " +
-        "Проверь, что запрос отправляется именно методом POST и body содержит { userIds: [userId] }."
+        "MAX считает ID диалогом. Проверь REQUIRED_CHANNEL_ID: должен быть ID канала с минусом, например -73970192098593."
       );
     }
 
@@ -1527,26 +1517,31 @@ if (isCallbackUpdate) {
     target
   });
 
-  if (isSubscriptionCheckPayload(callbackPayload)) {
-  await handleSubscriptionCheck(target, userId, callbackId);
-  return;
-}
+if (isSubscriptionCheckPayload(callbackPayload)) {
+  const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
 
+  if (!userIdFromPayload) {
+    console.warn(
+      "Subscription callback has no userId in payload. Payload:",
+      callbackPayload
+    );
 
+    if (callbackId) {
+      await answerMaxCallback(
+        callbackId,
+        "Кнопка устарела. Отправьте /проверить или получите новую кнопку."
+      );
+    }
 
-  if (callbackId) {
-    await answerMaxCallback(callbackId, "Неизвестная кнопка.");
+    await sendMaxMessage(
+      target,
+      "⚠️ Эта кнопка проверки устарела. Пожалуйста, отправьте команду /проверить или получите новую кнопку."
+    );
+
+    return;
   }
 
-  return;
-}
-
-// Текстовая команда проверки подписки
-if (
-  userText.toLowerCase() === "/check_sub" ||
-  userText.toLowerCase() === "/проверить"
-) {
-  await handleSubscriptionCheck(target, userId, "");
+  await handleSubscriptionCheck(target, userIdFromPayload, callbackId);
   return;
 }
 
