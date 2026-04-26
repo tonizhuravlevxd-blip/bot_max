@@ -399,13 +399,38 @@ function getIncomingText(update) {
 }
 
 function getCallbackPayload(update) {
-  return String(
-    update?.callback?.payload ||
-    update?.payload ||
-    update?.button?.payload ||
-    update?.message?.body?.payload ||
-    ""
-  ).trim();
+  const candidates = [
+    update?.callback?.payload,
+    update?.callback?.button?.payload,
+    update?.callback?.data,
+    update?.payload,
+    update?.button?.payload,
+    update?.message?.body?.payload
+  ];
+
+  for (const value of candidates) {
+    if (value === undefined || value === null) continue;
+
+    if (typeof value === "string" || typeof value === "number") {
+      const text = String(value).trim();
+      if (text) return text;
+    }
+
+    if (typeof value === "object") {
+      const nested =
+        value.payload ||
+        value.data ||
+        value.value ||
+        value.text;
+
+      if (nested !== undefined && nested !== null) {
+        const text = String(nested).trim();
+        if (text) return text;
+      }
+    }
+  }
+
+  return "";
 }
 
 function getCallbackId(update) {
@@ -413,6 +438,7 @@ function getCallbackId(update) {
     update?.callback?.callback_id ||
     update?.callback?.id ||
     update?.callback_id ||
+    update?.message_callback?.callback_id ||
     ""
   ).trim();
 }
@@ -437,6 +463,19 @@ function getUserIdFromSubscriptionPayload(payload) {
 }
 
 function getReplyTarget(update) {
+  const callback = update?.callback;
+  const callbackMessage = callback?.message;
+  const callbackRecipient = callbackMessage?.recipient;
+
+  // Для callback сначала пытаемся ответить туда, где была нажата кнопка
+  if (callbackRecipient?.chat_id) {
+    return { type: "chat_id", id: callbackRecipient.chat_id };
+  }
+
+  if (callbackRecipient?.user_id) {
+    return { type: "user_id", id: callbackRecipient.user_id };
+  }
+
   const message = update?.message;
   const recipient = message?.recipient;
 
@@ -444,22 +483,18 @@ function getReplyTarget(update) {
     return { type: "chat_id", id: recipient.chat_id };
   }
 
+  if (recipient?.user_id) {
+    return { type: "user_id", id: recipient.user_id };
+  }
+
   if (message?.sender?.user_id) {
     return { type: "user_id", id: message.sender.user_id };
   }
 
-  const callback = update?.callback;
   const callbackUserId = callback?.user?.user_id;
 
   if (callbackUserId) {
     return { type: "user_id", id: callbackUserId };
-  }
-
-  const callbackMessage = callback?.message;
-  const callbackRecipient = callbackMessage?.recipient;
-
-  if (callbackRecipient?.chat_id) {
-    return { type: "chat_id", id: callbackRecipient.chat_id };
   }
 
   if (callbackMessage?.sender?.user_id) {
@@ -642,8 +677,8 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
             {
               type: "callback",
               text: "✅ Проверить",
-              payload: checkPayload,
-              intent: "positive"
+              payload: checkPayload
+              
             }
           ]
         ]
@@ -730,28 +765,30 @@ async function handleSubscriptionCheck(target, userId, callbackId = "") {
   if (subscribed) {
     markSubscriptionVerified(userId);
 
-    if (callbackId) {
-      await answerMaxCallback(
-        callbackId,
-        "✅ Подписка найдена. Доступ открыт."
-      );
-    }
-
-    await sendMaxMessage(
-      target,
-      "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом."
-    );
-
-    return true;
-  }
-
   if (callbackId) {
-    await answerMaxCallback(
-      callbackId,
-      "Подпишитесь на обязательные каналы и нажмите проверить еще раз"
-    );
+  await answerMaxCallback(
+    callbackId,
+    "❌ Пока не вижу подписку. Подпишитесь и нажмите «Проверить» ещё раз."
+  );
 
-    return false;
+  await sendSubscriptionPrompt(
+    target,
+    userId,
+    "❌ Пока не вижу подписку на канал."
+  );
+
+  return false;
+}
+
+await sendSubscriptionPrompt(
+  target,
+  userId,
+  "❌ Пока не вижу подписку на канал."
+);
+
+return false;
+
+
   }
 
   await sendSubscriptionPrompt(
@@ -1291,24 +1328,65 @@ async function handleUpdate(update) {
       return;
     }
 
-    const userText = getIncomingText(update);
-    const callbackPayload = getCallbackPayload(update);
-    const callbackId = getCallbackId(update);
-    const incomingImageUrl = extractIncomingImageUrl(update);
+const userText = getIncomingText(update);
+const callbackPayload = getCallbackPayload(update);
+const callbackId = getCallbackId(update);
+const incomingImageUrl = extractIncomingImageUrl(update);
 
+const isCallbackUpdate =
+  updateType === "message_callback" ||
+  Boolean(callbackId) ||
+  Boolean(callbackPayload);
+
+// Отдельная обработка callback-кнопок
+if (isCallbackUpdate) {
+  console.log("Callback received:", {
+    callbackPayload,
+    callbackId,
+    userId,
+    target
+  });
+
+  if (isSubscriptionCheckPayload(callbackPayload)) {
+    const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
+
+    // Если кнопка была создана для конкретного пользователя,
+    // не даём другим пользователям в группе нажимать её за него.
     if (
-      isSubscriptionCheckPayload(callbackPayload) ||
-      userText.toLowerCase() === "/check_sub" ||
-      userText.toLowerCase() === "/проверить"
+      userIdFromPayload &&
+      String(userIdFromPayload) !== String(userId)
     ) {
-      const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
-      const checkUserId = userIdFromPayload || userId;
+      if (callbackId) {
+        await answerMaxCallback(
+          callbackId,
+          "Эта кнопка проверки предназначена для другого пользователя."
+        );
+      }
 
-      await handleSubscriptionCheck(target, checkUserId, callbackId);
       return;
     }
 
-    if (updateType !== "message_created") return;
+    await handleSubscriptionCheck(target, userId, callbackId);
+    return;
+  }
+
+  if (callbackId) {
+    await answerMaxCallback(callbackId, "Неизвестная кнопка.");
+  }
+
+  return;
+}
+
+// Текстовая команда проверки подписки
+if (
+  userText.toLowerCase() === "/check_sub" ||
+  userText.toLowerCase() === "/проверить"
+) {
+  await handleSubscriptionCheck(target, userId, "");
+  return;
+}
+
+if (updateType !== "message_created") return;
 
     const floodCheckText = `${userText || ""} ${incomingImageUrl ? "[image]" : ""}`;
 
