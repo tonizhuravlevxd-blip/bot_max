@@ -449,15 +449,17 @@ function getReplyTarget(update) {
   }
 
   const callback = update?.callback;
+  const callbackUserId = callback?.user?.user_id;
+
+  if (callbackUserId) {
+    return { type: "user_id", id: callbackUserId };
+  }
+
   const callbackMessage = callback?.message;
   const callbackRecipient = callbackMessage?.recipient;
 
   if (callbackRecipient?.chat_id) {
     return { type: "chat_id", id: callbackRecipient.chat_id };
-  }
-
-  if (callback?.user?.user_id) {
-    return { type: "user_id", id: callback.user.user_id };
   }
 
   if (callbackMessage?.sender?.user_id) {
@@ -545,7 +547,9 @@ async function maxRequest(path, options = {}) {
 }
 
 async function answerMaxCallback(callbackId, notification = "") {
-  if (!callbackId) return;
+  if (!callbackId) return false;
+
+  const text = String(notification || "").trim();
 
   try {
     await maxRequest("/answers", {
@@ -554,28 +558,28 @@ async function answerMaxCallback(callbackId, notification = "") {
         callback_id: callbackId
       },
       body: {
-        notification: notification || null
+        notification: text || null
       }
     });
 
-    return;
+    return true;
   } catch (firstError) {
-    try {
-      await maxRequest("/answers", {
-        method: "POST",
-        body: {
-          callback_id: callbackId,
-          notification: notification || null
-        }
-      });
+    console.warn("MAX callback answer with query failed:", firstError?.message || firstError);
+  }
 
-      return;
-    } catch (secondError) {
-      console.warn(
-        "Failed to answer MAX callback:",
-        secondError?.message || secondError
-      );
-    }
+  try {
+    await maxRequest("/answers", {
+      method: "POST",
+      body: {
+        callback_id: callbackId,
+        notification: text || null
+      }
+    });
+
+    return true;
+  } catch (secondError) {
+    console.warn("MAX callback answer with body failed:", secondError?.message || secondError);
+    return false;
   }
 }
 
@@ -720,11 +724,18 @@ async function checkRequiredChannelSubscription(userId) {
   }
 }
 
-async function handleSubscriptionCheck(target, userId) {
+async function handleSubscriptionCheck(target, userId, callbackId = "") {
   const subscribed = await checkRequiredChannelSubscription(userId);
 
   if (subscribed) {
     markSubscriptionVerified(userId);
+
+    if (callbackId) {
+      await answerMaxCallback(
+        callbackId,
+        "✅ Подписка найдена. Доступ открыт."
+      );
+    }
 
     await sendMaxMessage(
       target,
@@ -732,6 +743,15 @@ async function handleSubscriptionCheck(target, userId) {
     );
 
     return true;
+  }
+
+  if (callbackId) {
+    await answerMaxCallback(
+      callbackId,
+      "Подпишитесь на обязательные каналы и нажмите проверить еще раз"
+    );
+
+    return false;
   }
 
   await sendSubscriptionPrompt(
@@ -1281,12 +1301,10 @@ async function handleUpdate(update) {
       userText.toLowerCase() === "/check_sub" ||
       userText.toLowerCase() === "/проверить"
     ) {
-      await answerMaxCallback(callbackId, "Проверяю подписку...");
-
       const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
       const checkUserId = userIdFromPayload || userId;
 
-      await handleSubscriptionCheck(target, checkUserId);
+      await handleSubscriptionCheck(target, checkUserId, callbackId);
       return;
     }
 
