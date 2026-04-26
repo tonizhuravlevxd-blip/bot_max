@@ -9,7 +9,29 @@ const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const IMAGE_REQUEST_LIMIT = 8; 
-const CHATGPT_REQUEST_LIMIT = 15; 
+const CHATGPT_REQUEST_LIMIT = 15;
+
+// После этих значений нужна подписка
+const IMAGE_REQUESTS_BEFORE_SUBSCRIPTION = Number(
+  process.env.IMAGE_REQUESTS_BEFORE_SUBSCRIPTION || 3
+);
+
+const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
+  process.env.CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION || 4
+);
+
+// ID канала/чата MAX, где нужно проверить подписку
+const REQUIRED_CHANNEL_ID = process.env.REQUIRED_CHANNEL_ID || "id236700415542_biz";
+
+// Ссылка на канал для кнопки "Подписаться"
+const REQUIRED_CHANNEL_URL =
+  process.env.REQUIRED_CHANNEL_URL || "https://max.ru/id236700415542_biz";
+
+// Payload кнопки "Проверить"
+const SUBSCRIPTION_CHECK_PAYLOAD = "check_subscription";
+
+// Пользователи, которые уже прошли проверку подписки
+const subscriptionVerifiedUsers = new Set();
 
 const userRequestCounts = {};
 
@@ -296,6 +318,40 @@ function isRequestLimitReached(userId, type, limit) {
   return userRequestCounts[key]?.[type] >= limit;
 }
 
+function getUserRequestCounts(userId) {
+  const key = getUserRequestKey(userId);
+
+  if (!userRequestCounts[key]) {
+    userRequestCounts[key] = { images: 0, chatgpt: 0 };
+  }
+
+  return userRequestCounts[key];
+}
+
+function isSubscriptionVerified(userId) {
+  return subscriptionVerifiedUsers.has(String(userId));
+}
+
+function markSubscriptionVerified(userId) {
+  subscriptionVerifiedUsers.add(String(userId));
+}
+
+function isSubscriptionRequiredForRequest(userId, type) {
+  if (isSubscriptionVerified(userId)) return false;
+
+  const counts = getUserRequestCounts(userId);
+
+  if (type === "images") {
+    return counts.images >= IMAGE_REQUESTS_BEFORE_SUBSCRIPTION;
+  }
+
+  if (type === "chatgpt") {
+    return counts.chatgpt >= CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION;
+  }
+
+  return false;
+}
+
 function resetDailyLimits() {
   // Сбрасываем лимиты ежедневно, можно настроить с помощью cron-job на сброс в полночь
   setInterval(() => {
@@ -338,6 +394,16 @@ function sleep(ms) {
 
 function getIncomingText(update) {
   return update?.message?.body?.text?.trim() || update?.payload?.trim() || "";
+}
+
+function getCallbackPayload(update) {
+  return (
+    update?.payload ||
+    update?.callback?.payload ||
+    update?.button?.payload ||
+    update?.message?.body?.payload ||
+    ""
+  );
 }
 
 function getReplyTarget(update) {
@@ -451,6 +517,125 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
       notify: true
     }
   });
+}
+
+async function sendSubscriptionPrompt(target, prefixText = "") {
+  const text =
+    `${prefixText ? `${prefixText}\n\n` : ""}` +
+    "🔒 Чтобы продолжить пользоваться ботом сверх бесплатного лимита, подпишитесь на наш канал и нажмите кнопку **Проверить**.";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: [
+          [
+            {
+              type: "link",
+              text: "📢 Подписаться на канал",
+              url: REQUIRED_CHANNEL_URL
+            }
+          ],
+          [
+            {
+              type: "callback",
+              text: "✅ Проверить",
+              payload: SUBSCRIPTION_CHECK_PAYLOAD
+            }
+          ]
+        ]
+      }
+    }
+  ];
+
+  try {
+    await sendMaxMessageWithAttachments(target, text, attachments);
+  } catch (error) {
+    console.warn("Failed to send subscription buttons, fallback to text:", error?.message || error);
+
+    await sendMaxMessage(
+      target,
+      `${text}\n\n📢 Канал: ${REQUIRED_CHANNEL_URL}\n\nПосле подписки отправьте команду: /check_sub`
+    );
+  }
+}
+
+function isPositiveMembershipResponse(body) {
+  if (!body) return false;
+
+  const status = String(
+    body?.status ||
+    body?.membership?.status ||
+    body?.member?.status ||
+    body?.role ||
+    ""
+  ).toLowerCase();
+
+  if (["member", "administrator", "admin", "owner", "creator"].includes(status)) {
+    return true;
+  }
+
+  if (body?.is_member === true || body?.subscribed === true) {
+    return true;
+  }
+
+  if (body?.user_id || body?.user?.user_id || body?.member?.user_id) {
+    return true;
+  }
+
+  return false;
+}
+
+async function checkRequiredChannelSubscription(userId) {
+  if (isSubscriptionVerified(userId)) return true;
+
+  if (!REQUIRED_CHANNEL_ID) {
+    console.warn("REQUIRED_CHANNEL_ID is not set. Cannot check subscription.");
+    return false;
+  }
+
+  try {
+    const channelId = encodeURIComponent(REQUIRED_CHANNEL_ID);
+    const encodedUserId = encodeURIComponent(userId);
+
+    /*
+      ВАЖНО:
+      Если в MAX API у вашего проекта другой endpoint проверки участника,
+      нужно будет поменять только эту строку.
+    */
+    const result = await maxRequest(`/chats/${channelId}/members/${encodedUserId}`, {
+      method: "GET"
+    });
+
+    return isPositiveMembershipResponse(result);
+  } catch (error) {
+    console.warn(
+      `Subscription check failed for user ${userId}:`,
+      error?.message || error
+    );
+
+    return false;
+  }
+}
+
+async function handleSubscriptionCheck(target, userId) {
+  const subscribed = await checkRequiredChannelSubscription(userId);
+
+  if (subscribed) {
+    markSubscriptionVerified(userId);
+
+    await sendMaxMessage(
+      target,
+      "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом."
+    );
+
+    return;
+  }
+
+  await sendSubscriptionPrompt(
+    target,
+    "❌ Пока не вижу подписку на канал."
+  );
 }
 
 function extractMaxMessageId(result) {
@@ -937,6 +1122,14 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
+  if (isSubscriptionRequiredForRequest(userId, "images")) {
+    await sendSubscriptionPrompt(
+      target,
+      `Вы уже создали ${IMAGE_REQUESTS_BEFORE_SUBSCRIPTION} фото бесплатно.`
+    );
+    return;
+  }
+
   incrementRequestCount(userId, "images");
 
   const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
@@ -970,10 +1163,20 @@ async function handleUpdate(update) {
       return;
     }
 
-    if (updateType !== "message_created") return;
-
     const userText = getIncomingText(update);
+    const callbackPayload = getCallbackPayload(update);
     const incomingImageUrl = extractIncomingImageUrl(update);
+
+    if (
+      callbackPayload === SUBSCRIPTION_CHECK_PAYLOAD ||
+      userText.toLowerCase() === "/check_sub" ||
+      userText.toLowerCase() === "/проверить"
+    ) {
+      await handleSubscriptionCheck(target, userId);
+      return;
+    }
+
+    if (updateType !== "message_created") return;
 
     const floodCheckText = `${userText || ""} ${incomingImageUrl ? "[image]" : ""}`;
 
@@ -1050,6 +1253,14 @@ async function handleUpdate(update) {
       await sendMaxMessage(
         target,
         "Кажется вам надо немного отдохнуть от ИИ🏝️, **приходите чуть позже и продолжайте**🦦"
+      );
+      return;
+    }
+
+    if (isSubscriptionRequiredForRequest(userId, "chatgpt")) {
+      await sendSubscriptionPrompt(
+        target,
+        `Вы уже использовали ${CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION} текстовых запроса бесплатно.`
       );
       return;
     }
