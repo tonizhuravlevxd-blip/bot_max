@@ -625,7 +625,7 @@ async function sendMaxSingleMessage(target, text, notify = true) {
     body: {
       text,
       notify,
-      format: "Markdown" // Указание формата для Markdown
+      format: "markdown" // Указание формата для Markdown
     }
   });
 }
@@ -659,7 +659,7 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     `${prefixText ? `${prefixText}\n\n` : ""}` +
     "🔒 Чтобы продолжить пользоваться ботом сверх бесплатного лимита, подпишитесь на наш канал и нажмите кнопку **Проверить**.";
 
-  const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
+  const checkPayload = SUBSCRIPTION_CHECK_PAYLOAD;
 
   const attachments = [
     {
@@ -765,30 +765,26 @@ async function handleSubscriptionCheck(target, userId, callbackId = "") {
   if (subscribed) {
     markSubscriptionVerified(userId);
 
+    if (callbackId) {
+      await answerMaxCallback(
+        callbackId,
+        "✅ Подписка найдена. Доступ открыт."
+      );
+    }
+
+    await sendMaxMessage(
+      target,
+      "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом."
+    );
+
+    return true;
+  }
+
   if (callbackId) {
-  await answerMaxCallback(
-    callbackId,
-    "❌ Пока не вижу подписку. Подпишитесь и нажмите «Проверить» ещё раз."
-  );
-
-  await sendSubscriptionPrompt(
-    target,
-    userId,
-    "❌ Пока не вижу подписку на канал."
-  );
-
-  return false;
-}
-
-await sendSubscriptionPrompt(
-  target,
-  userId,
-  "❌ Пока не вижу подписку на канал."
-);
-
-return false;
-
-
+    await answerMaxCallback(
+      callbackId,
+      "❌ Пока не вижу подписку. Подпишитесь и нажмите «Проверить» ещё раз."
+    );
   }
 
   await sendSubscriptionPrompt(
@@ -1348,27 +1344,11 @@ if (isCallbackUpdate) {
   });
 
   if (isSubscriptionCheckPayload(callbackPayload)) {
-    const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
+  await handleSubscriptionCheck(target, userId, callbackId);
+  return;
+}
 
-    // Если кнопка была создана для конкретного пользователя,
-    // не даём другим пользователям в группе нажимать её за него.
-    if (
-      userIdFromPayload &&
-      String(userIdFromPayload) !== String(userId)
-    ) {
-      if (callbackId) {
-        await answerMaxCallback(
-          callbackId,
-          "Эта кнопка проверки предназначена для другого пользователя."
-        );
-      }
 
-      return;
-    }
-
-    await handleSubscriptionCheck(target, userId, callbackId);
-    return;
-  }
 
   if (callbackId) {
     await answerMaxCallback(callbackId, "Неизвестная кнопка.");
