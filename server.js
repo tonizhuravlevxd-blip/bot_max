@@ -1498,54 +1498,70 @@ async function handleUpdate(update) {
       return;
     }
 
-const userText = getIncomingText(update);
-const callbackPayload = getCallbackPayload(update);
-const callbackId = getCallbackId(update);
-const incomingImageUrl = extractIncomingImageUrl(update);
+    const userText = getIncomingText(update);
+    const callbackPayload = getCallbackPayload(update);
+    const callbackId = getCallbackId(update);
+    const incomingImageUrl = extractIncomingImageUrl(update);
 
-const isCallbackUpdate =
-  updateType === "message_callback" ||
-  Boolean(callbackId) ||
-  Boolean(callbackPayload);
+    const isCallbackUpdate =
+      updateType === "message_callback" ||
+      Boolean(callbackId) ||
+      Boolean(callbackPayload);
 
-// Отдельная обработка callback-кнопок
-if (isCallbackUpdate) {
-  console.log("Callback received:", {
-    callbackPayload,
-    callbackId,
-    userId,
-    target
-  });
-
-if (isSubscriptionCheckPayload(callbackPayload)) {
-  const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
-
-  if (!userIdFromPayload) {
-    console.warn(
-      "Subscription callback has no userId in payload. Payload:",
-      callbackPayload
-    );
-
-    if (callbackId) {
-      await answerMaxCallback(
+    // Отдельная обработка callback-кнопок
+    if (isCallbackUpdate) {
+      console.log("Callback received:", {
+        callbackPayload,
         callbackId,
-        "Кнопка устарела. Отправьте /проверить или получите новую кнопку."
-      );
+        userId,
+        target
+      });
+
+      if (isSubscriptionCheckPayload(callbackPayload)) {
+        const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
+
+        if (!userIdFromPayload) {
+          console.warn(
+            "Subscription callback has no userId in payload. Payload:",
+            callbackPayload
+          );
+
+          if (callbackId) {
+            await answerMaxCallback(
+              callbackId,
+              "Кнопка устарела. Отправьте /проверить или получите новую кнопку."
+            );
+          }
+
+          await sendMaxMessage(
+            target,
+            "⚠️ Эта кнопка проверки устарела. Пожалуйста, отправьте команду /проверить или получите новую кнопку."
+          );
+
+          return;
+        }
+
+        await handleSubscriptionCheck(target, userIdFromPayload, callbackId);
+        return;
+      }
+
+      if (callbackId) {
+        await answerMaxCallback(callbackId, "Неизвестная кнопка.");
+      }
+
+      return;
     }
 
-    await sendMaxMessage(
-      target,
-      "⚠️ Эта кнопка проверки устарела. Пожалуйста, отправьте команду /проверить или получите новую кнопку."
-    );
+    // Текстовая команда проверки подписки
+    if (
+      userText.toLowerCase() === "/check_sub" ||
+      userText.toLowerCase() === "/проверить"
+    ) {
+      await handleSubscriptionCheck(target, userId, "");
+      return;
+    }
 
-    return;
-  }
-
-  await handleSubscriptionCheck(target, userIdFromPayload, callbackId);
-  return;
-}
-
-if (updateType !== "message_created") return;
+    if (updateType !== "message_created") return;
 
     const floodCheckText = `${userText || ""} ${incomingImageUrl ? "[image]" : ""}`;
 
