@@ -1092,7 +1092,7 @@ app.get("/", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.status(200).json({ ok: true });
+  res.status(200).type("text/plain").send("ok");
 });
 
 app.post("/webhook", (req, res) => {
