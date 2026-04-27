@@ -20,12 +20,19 @@ const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
   process.env.CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION || 4
 );
 
-// ID канала/чата MAX, где нужно проверить подписку
-const REQUIRED_CHANNEL_ID = process.env.REQUIRED_CHANNEL_ID || "-73970192098593";
-
-// Ссылка на канал для кнопки "Подписаться"
-const REQUIRED_CHANNEL_URL =
-  process.env.REQUIRED_CHANNEL_URL || "https://max.ru/id236700415542_biz";
+// Каналы MAX, на которые нужна обязательная подписка
+const REQUIRED_CHANNELS = [
+  {
+    id: process.env.REQUIRED_CHANNEL_ID || "-73970192098593",
+    url: process.env.REQUIRED_CHANNEL_URL || "https://max.ru/id236700415542_biz",
+    title: "канал 1"
+  },
+  {
+    id: process.env.REQUIRED_CHANNEL_ID_2 || "-74076280037437",
+    url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/join/ufG4-ZgGP_lVbmSohw5ZWND7y5udP2zGDXhS7MI0pmw",
+    title: "канал 2"
+  }
+].filter((channel) => channel.id);
 
 // Payload кнопки "Проверить"
 const SUBSCRIPTION_CHECK_PAYLOAD = "check_subscription";
@@ -657,32 +664,38 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
-    "🔒 Чтобы продолжить пользоваться ботом сверх бесплатного лимита, подпишитесь на наш канал и нажмите кнопку **Проверить**.";
+    "🔒 Чтобы продолжить пользоваться ботом сверх бесплатного лимита, подпишитесь на обязательные каналы и нажмите кнопку **Проверить**.";
 
   // ВАЖНО: кладём userId в payload, чтобы при callback проверять именно пользователя,
   // а не бота или чат.
   const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
 
+  const subscribeButtons = REQUIRED_CHANNELS
+    .filter((channel) => channel.url)
+    .map((channel, index) => [
+      {
+        type: "link",
+        text: `📢 Подписаться на ${channel.title || `канал ${index + 1}`}`,
+        url: channel.url
+      }
+    ]);
+
+  const buttons = [
+    ...subscribeButtons,
+    [
+      {
+        type: "callback",
+        text: "✅ Проверить",
+        payload: checkPayload
+      }
+    ]
+  ];
+
   const attachments = [
     {
       type: "inline_keyboard",
       payload: {
-        buttons: [
-          [
-            {
-              type: "link",
-              text: "📢 Подписаться на канал",
-              url: REQUIRED_CHANNEL_URL
-            }
-          ],
-          [
-            {
-              type: "callback",
-              text: "✅ Проверить",
-              payload: checkPayload
-            }
-          ]
-        ]
+        buttons
       }
     }
   ];
@@ -695,9 +708,18 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
       error?.message || error
     );
 
+    const channelsText = REQUIRED_CHANNELS
+      .map((channel, index) => {
+        const title = channel.title || `канал ${index + 1}`;
+        return channel.url
+          ? `📢 ${title}: ${channel.url}`
+          : `📢 ${title}: ссылка не указана`;
+      })
+      .join("\n");
+
     await sendMaxMessage(
       target,
-      `${text}\n\n📢 Канал: ${REQUIRED_CHANNEL_URL}\n\nПосле подписки отправьте команду: /проверить`
+      `${text}\n\n${channelsText}\n\nПосле подписки отправьте команду: /проверить`
     );
   }
 }
@@ -834,30 +856,19 @@ function getNextMembersMarker(body) {
   ).trim();
 }
 
-async function checkRequiredChannelSubscription(userId) {
-  if (isSubscriptionVerified(userId)) return true;
-
-  if (!REQUIRED_CHANNEL_ID) {
-    console.warn("REQUIRED_CHANNEL_ID is not set. Cannot check subscription.");
+async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
+  if (!requiredChannel?.id) {
+    console.warn("Required channel ID is not set. Cannot check subscription.");
     return false;
   }
 
-  const channelId = encodeURIComponent(REQUIRED_CHANNEL_ID);
+  const channelId = encodeURIComponent(requiredChannel.id);
   const expectedUserId = String(userId);
 
   try {
     /*
-      Рабочий вариант по твоему Postman:
-      GET /chats/-73970192098593/members
-
-      Ответ:
-      {
-        "members": [
-          { "user_id": 282278177, ... }
-        ]
-      }
-
-      Поэтому получаем список members и ищем нужный user_id.
+      Проверяем участников канала:
+      GET /chats/{channelId}/members
     */
 
     let marker = "";
@@ -879,7 +890,8 @@ async function checkRequiredChannelSubscription(userId) {
           method: "GET",
           path: `/chats/${channelId}/members`,
           query,
-          expectedUserId
+          expectedUserId,
+          requiredChannelId: requiredChannel.id
         })
       );
 
@@ -889,12 +901,15 @@ async function checkRequiredChannelSubscription(userId) {
       });
 
       console.log(
-        `Subscription check response page ${page} for user ${userId}:`,
+        `Subscription check response page ${page} for user ${userId}, channel ${requiredChannel.id}:`,
         JSON.stringify(result).slice(0, 3000)
       );
 
       if (responseContainsActiveUser(result, expectedUserId)) {
-        console.log(`Subscription check result for user ${userId}: true`);
+        console.log(
+          `Subscription check result for user ${userId}, channel ${requiredChannel.id}: true`
+        );
+
         return true;
       }
 
@@ -907,13 +922,16 @@ async function checkRequiredChannelSubscription(userId) {
       marker = nextMarker;
     }
 
-    console.log(`Subscription check result for user ${userId}: false`);
+    console.log(
+      `Subscription check result for user ${userId}, channel ${requiredChannel.id}: false`
+    );
+
     return false;
   } catch (error) {
     const message = String(error?.message || error);
 
     console.warn(
-      `Subscription check failed for user ${userId}:`,
+      `Subscription check failed for user ${userId}, channel ${requiredChannel.id}:`,
       message
     );
 
@@ -925,12 +943,39 @@ async function checkRequiredChannelSubscription(userId) {
 
     if (/Method is not available for dialogs/i.test(message)) {
       console.warn(
-        "MAX считает ID диалогом. Проверь REQUIRED_CHANNEL_ID: должен быть ID канала с минусом, например -73970192098593."
+        `MAX считает ID диалогом. Проверь ID канала: ${requiredChannel.id}`
       );
     }
 
     return false;
   }
+}
+
+async function checkRequiredChannelSubscription(userId) {
+  if (isSubscriptionVerified(userId)) return true;
+
+  if (!REQUIRED_CHANNELS.length) {
+    console.warn("REQUIRED_CHANNELS is empty. Cannot check subscription.");
+    return false;
+  }
+
+  for (const requiredChannel of REQUIRED_CHANNELS) {
+    const subscribed = await checkSingleRequiredChannelSubscription(
+      userId,
+      requiredChannel
+    );
+
+    if (!subscribed) {
+      console.log(
+        `User ${userId} is not subscribed to required channel ${requiredChannel.id}`
+      );
+
+      return false;
+    }
+  }
+
+  console.log(`User ${userId} is subscribed to all required channels`);
+  return true;
 }
 
 async function handleSubscriptionCheck(target, userId, callbackId = "") {
