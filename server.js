@@ -1,4 +1,5 @@
 import express from "express";
+import pg from "pg";
 
 
 const app = express();
@@ -73,6 +74,221 @@ function normalizeFloodText(text) {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function getRealUserIdForBroadcast(update, target) {
+  return (
+    update?.message?.sender?.user_id ||
+    update?.callback?.user?.user_id ||
+    update?.user?.user_id ||
+    update?.user_id ||
+    (target?.type === "user_id" ? target.id : "") ||
+    ""
+  );
+}
+
+function isValidUserIdForBroadcast(userId) {
+  const value = String(userId || "").trim();
+
+  return (
+    value &&
+    value !== "unknown" &&
+    value !== "undefined" &&
+    value !== "null"
+  );
+}
+
+function isAdminUser(userId) {
+  return ADMIN_USER_IDS.has(String(userId));
+}
+
+async function initBroadcastUsersDb() {
+  if (!dbPool) return;
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS max_bot_broadcast_users (
+      user_id TEXT NOT NULL,
+      bot_key TEXT NOT NULL,
+      first_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_seen_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, bot_key)
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_broadcast_users_user_id
+    ON max_bot_broadcast_users (user_id)
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_broadcast_users_bot_key
+    ON max_bot_broadcast_users (bot_key)
+  `);
+
+  console.log("Broadcast users DB initialized");
+}
+
+async function registerBotUserInDb(userId) {
+  if (!dbPool) return false;
+  if (!isValidUserIdForBroadcast(userId)) return false;
+
+  const key = String(userId);
+
+  await dbPool.query(
+    `
+      INSERT INTO max_bot_broadcast_users (user_id, bot_key)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id, bot_key)
+      DO UPDATE SET last_seen_at = NOW()
+    `,
+    [key, BOT_KEY]
+  );
+
+  return true;
+}
+
+async function getBroadcastRecipientsFromDb() {
+  if (!dbPool) return [];
+
+  const result = BROADCAST_USE_ALL_BOTS
+    ? await dbPool.query(`
+        SELECT DISTINCT user_id
+        FROM max_bot_broadcast_users
+        ORDER BY user_id
+      `)
+    : await dbPool.query(
+        `
+          SELECT DISTINCT user_id
+          FROM max_bot_broadcast_users
+          WHERE bot_key = $1
+          ORDER BY user_id
+        `,
+        [BOT_KEY]
+      );
+
+  return result.rows
+    .map((row) => String(row.user_id || "").trim())
+    .filter(isValidUserIdForBroadcast);
+}
+
+function parseBroadcastCommand(text) {
+  const value = String(text || "");
+
+  const match = value.match(
+    /^\s*\/(?:post|пост|broadcast|sendall|рассылка)(?:@\S+)?(?:\s+([\s\S]*))?$/iu
+  );
+
+  if (!match) return null;
+
+  return String(match[1] || "").trim();
+}
+
+function isBroadcastCommand(text) {
+  return parseBroadcastCommand(text) !== null;
+}
+
+async function handleBroadcastCommand(target, adminUserId, userText) {
+  const broadcastText = parseBroadcastCommand(userText);
+
+  if (broadcastText === null) {
+    return false;
+  }
+
+  if (!isAdminUser(adminUserId)) {
+    console.warn(`User ${adminUserId} tried to use broadcast command`);
+
+    await sendMaxMessage(
+      target,
+      "⛔ Эта команда доступна только администратору."
+    );
+
+    return true;
+  }
+
+  if (!dbPool) {
+    await sendMaxMessage(
+      target,
+      "⚠️ DATABASE_URL не задан. Рассылка через базу недоступна."
+    );
+
+    return true;
+  }
+
+  if (!broadcastText) {
+    await sendMaxMessage(
+      target,
+      [
+        "✍️ Напишите текст рассылки после команды.",
+        "",
+        "Примеры:",
+        "`/post Всем привет! Это сообщение от бота.`",
+        "`/рассылка Сегодня важное объявление.`"
+      ].join("\n")
+    );
+
+    return true;
+  }
+
+  const recipients = await getBroadcastRecipientsFromDb();
+
+  if (!recipients.length) {
+    await sendMaxMessage(
+      target,
+      "⚠️ В базе пока нет пользователей для рассылки."
+    );
+
+    return true;
+  }
+
+  await sendMaxMessage(
+    target,
+    `📣 Начинаю рассылку для ${recipients.length} пользователей...`
+  );
+
+  let sentCount = 0;
+  let failedCount = 0;
+
+  for (const recipientUserId of recipients) {
+    try {
+      await sendMaxMessage(
+        {
+          type: "user_id",
+          id: recipientUserId
+        },
+        broadcastText
+      );
+
+      sentCount += 1;
+    } catch (error) {
+      failedCount += 1;
+
+      console.warn(
+        `Broadcast failed for user ${recipientUserId}:`,
+        error?.message || error
+      );
+    }
+
+    if (BROADCAST_DELAY_MS > 0) {
+      await sleep(BROADCAST_DELAY_MS);
+    }
+  }
+
+  await sendMaxMessage(
+    target,
+    [
+      "✅ Рассылка завершена.",
+      "",
+      `📨 Успешно отправлено: ${sentCount}`,
+      `⚠️ Ошибок: ${failedCount}`,
+      `👥 Получателей в выборке: ${recipients.length}`,
+      "",
+      BROADCAST_USE_ALL_BOTS
+        ? "Режим: пользователи всех ботов из общей таблицы."
+        : `Режим: только пользователи BOT_KEY=${BOT_KEY}.`
+    ].join("\n")
+  );
+
+  return true;
 }
 
 function checkAntiFlood(userId, textForCheck = "") {
@@ -1045,6 +1261,52 @@ async function editMaxMessage(messageId, text) {
   });
 }
 
+const { Pool } = pg;
+
+// Общая база данных PostgreSQL.
+// Можно использовать DATABASE_URL от другого бота.
+const DATABASE_URL = process.env.DATABASE_URL || "";
+
+// Уникальное имя этого бота в общей базе.
+// Если хочешь отделять пользователей разных ботов — оставь уникальным.
+const BOT_KEY = process.env.BOT_KEY || "max_openai_bot";
+
+// Если true — рассылка будет брать пользователей всех ботов из общей таблицы.
+// Если false — только пользователей этого BOT_KEY.
+const BROADCAST_USE_ALL_BOTS =false
+  String(process.env.BROADCAST_USE_ALL_BOTS || "false").toLowerCase() === "true";
+
+// ID админов, которым разрешена рассылка.
+// Пример:
+// ADMIN_USER_IDS=282278177
+const ADMIN_USER_IDS = new Set(
+  String(process.env.ADMIN_USER_IDS || process.env.ADMIN_USER_ID || "")
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+);
+
+// Пауза между сообщениями рассылки
+const BROADCAST_DELAY_MS = Number(process.env.BROADCAST_DELAY_MS || 350);
+
+const dbPool = DATABASE_URL
+  ? new Pool({
+      connectionString: DATABASE_URL,
+      ssl:
+        String(process.env.DATABASE_SSL || "true").toLowerCase() === "false"
+          ? false
+          : { rejectUnauthorized: false }
+    })
+  : null;
+
+if (!DATABASE_URL) {
+  console.warn("DATABASE_URL is not set. Broadcast users DB will be unavailable.");
+}
+
+if (!ADMIN_USER_IDS.size) {
+  console.warn("ADMIN_USER_IDS is not set. Broadcast command will be unavailable.");
+}
+
 async function deleteMaxMessage(messageId) {
   if (!messageId) return;
 
@@ -1532,7 +1794,13 @@ async function handleUpdate(update) {
     return;
   }
 
-  const userId = getStableUserId(update, target);
+    const userId = getStableUserId(update, target);
+
+  const broadcastUserId = getRealUserIdForBroadcast(update, target);
+
+  registerBotUserInDb(broadcastUserId).catch((error) => {
+    console.warn("Failed to register bot user in DB:", error?.message || error);
+  });
 
   try {
     if (updateType === "bot_started") {
@@ -1594,6 +1862,14 @@ async function handleUpdate(update) {
         await answerMaxCallback(callbackId, "Неизвестная кнопка.");
       }
 
+      return;
+    }
+
+    // Админ-команда рассылки всем пользователям бота
+    if (isBroadcastCommand(userText)) {
+      if (updateType !== "message_created") return;
+
+      await handleBroadcastCommand(target, userId, userText);
       return;
     }
 
@@ -1760,6 +2036,12 @@ app.post("/webhook", (req, res) => {
 
 resetDailyLimits();
 
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`MAX OpenAI bot is running on port ${PORT}`);
-});
+initBroadcastUsersDb()
+  .catch((error) => {
+    console.warn("Broadcast DB init failed:", error?.message || error);
+  })
+  .finally(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`MAX OpenAI bot is running on port ${PORT}`);
+    });
+  });
