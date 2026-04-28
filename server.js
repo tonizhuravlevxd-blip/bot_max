@@ -69,6 +69,33 @@ function getStableUserId(update, target) {
   );
 }
 
+function getUserFirstName(update) {
+  const candidates = [
+    update?.message?.sender?.first_name,
+    update?.message?.sender?.firstName,
+    update?.message?.sender?.name,
+    update?.message?.sender?.full_name,
+    update?.callback?.user?.first_name,
+    update?.callback?.user?.firstName,
+    update?.callback?.user?.name,
+    update?.callback?.user?.full_name,
+    update?.user?.first_name,
+    update?.user?.firstName,
+    update?.user?.name,
+    update?.user?.full_name
+  ];
+
+  for (const value of candidates) {
+    const text = String(value || "").trim();
+
+    if (text) {
+      return text.split(/\s+/)[0].slice(0, 50);
+    }
+  }
+
+  return "";
+}
+
 function normalizeFloodText(text) {
   return String(text || "")
     .toLowerCase()
@@ -408,7 +435,7 @@ function unlockUserProcessing(userId) {
   userBusyUntil.delete(userId);
 }
 
-async function sendBusyWarningIfNeeded(target, userId) {
+async function sendBusyWarningIfNeeded(target, userId, firstName = "") {
   const now = Date.now();
   const lastWarningAt = userBusyWarningAt.get(userId) || 0;
 
@@ -416,9 +443,11 @@ async function sendBusyWarningIfNeeded(target, userId) {
 
   userBusyWarningAt.set(userId, now);
 
+  const namePrefix = firstName ? `${firstName}, ` : "";
+
   await sendMaxMessage(
     target,
-    "⏳ Предыдущий запрос ещё обрабатывается. Пожалуйста, дождитесь ответа."
+    `😅 ${namePrefix}Может хватит спамить? Пожалуйста, дождитесь ответа.`
   ).catch((error) => {
     console.error("Failed to send busy warning:", error);
   });
@@ -1312,10 +1341,7 @@ const DATABASE_URL = process.env.DATABASE_URL || "";
 // Если хочешь отделять пользователей разных ботов — оставь уникальным.
 const BOT_KEY = process.env.BOT_KEY || "max_openai_bot";
 
-// Если true — рассылка будет брать пользователей всех ботов из общей таблицы.
-// Если false — только пользователей этого BOT_KEY.
-const BROADCAST_USE_ALL_BOTS =false
-  String(process.env.BROADCAST_USE_ALL_BOTS || "false").toLowerCase() === "true";
+const BROADCAST_USE_ALL_BOTS = false;
 
 // ID админов, которым разрешена рассылка.
 // Пример:
@@ -1836,6 +1862,8 @@ async function handleUpdate(update) {
   }
 
     const userId = getStableUserId(update, target);
+  const firstName = getUserFirstName(update);
+  
 
   const broadcastUserId = getRealUserIdForBroadcast(update, target);
 
@@ -1978,7 +2006,7 @@ async function handleUpdate(update) {
     }
 
     if (isUserBusy(userId)) {
-      await sendBusyWarningIfNeeded(target, userId);
+      await sendBusyWarningIfNeeded(target, userId,firstName);
       return;
     }
 
