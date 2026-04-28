@@ -28,7 +28,7 @@ const REQUIRED_CHANNELS = [
     title: "канал 1"
   },
   {
-    id: process.env.REQUIRED_CHANNEL_ID_2 || "-74076616285473",
+    id: process.env.REQUIRED_CHANNEL_ID_2 || "-74096616285473",
     url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/join/P7GhkQ-vh7uGxJE2UYOY4QoDG27pJLFh1yfA9tj-ag0",
     title: "канал 2"
   }
