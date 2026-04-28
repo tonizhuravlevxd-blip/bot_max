@@ -14,7 +14,7 @@ const CHATGPT_REQUEST_LIMIT = 15;
 
 // После этих значений нужна подписка
 const IMAGE_REQUESTS_BEFORE_SUBSCRIPTION = Number(
-  process.env.IMAGE_REQUESTS_BEFORE_SUBSCRIPTION || 3
+  process.env.IMAGE_REQUESTS_BEFORE_SUBSCRIPTION || 2
 );
 
 const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
@@ -880,7 +880,7 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
-    "🔒 Чтобы продолжить пользоваться ботом сверх бесплатного лимита, подпишитесь на обязательные каналы и нажмите кнопку **Проверить**.";
+    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку Проверить.";
 
   // ВАЖНО: кладём userId в payload, чтобы при callback проверять именно пользователя,
   // а не бота или чат.
