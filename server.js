@@ -597,7 +597,7 @@ const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
 const MAX_WEBHOOK_SECRET = process.env.MAX_WEBHOOK_SECRET || "";
 const MAX_ATTACHMENT_RETRIES = Number(process.env.MAX_ATTACHMENT_RETRIES || 5);
 const MAX_INPUT_IMAGE_BYTES = Number(process.env.MAX_INPUT_IMAGE_BYTES || 20 * 1024 * 1024);
-const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS || 850);
+const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS || 2000);
 
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
@@ -616,6 +616,48 @@ const STATUS_DOT_FRAMES = [".", "..", "..."];
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
+
+const OPENAI_TEXT_CONCURRENCY = Number(process.env.OPENAI_TEXT_CONCURRENCY || 10);
+const OPENAI_IMAGE_CONCURRENCY = Number(process.env.OPENAI_IMAGE_CONCURRENCY || 2);
+
+function createConcurrencyLimiter(maxConcurrent) {
+  let activeCount = 0;
+  const queue = [];
+
+  async function runNext() {
+    if (activeCount >= maxConcurrent) return;
+
+    const item = queue.shift();
+    if (!item) return;
+
+    activeCount += 1;
+
+    try {
+      const result = await item.task();
+      item.resolve(result);
+    } catch (error) {
+      item.reject(error);
+    } finally {
+      activeCount -= 1;
+      runNext();
+    }
+  }
+
+  return function limit(task) {
+    return new Promise((resolve, reject) => {
+      queue.push({
+        task,
+        resolve,
+        reject
+      });
+
+      runNext();
+    });
+  };
+}
+
+const runTextOpenAI = createConcurrencyLimiter(OPENAI_TEXT_CONCURRENCY);
+const runImageOpenAI = createConcurrencyLimiter(OPENAI_IMAGE_CONCURRENCY);
 
 function getIncomingText(update) {
   return update?.message?.body?.text?.trim() || update?.payload?.trim() || "";
@@ -1117,8 +1159,7 @@ async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
       });
 
       console.log(
-        `Subscription check response page ${page} for user ${userId}, channel ${requiredChannel.id}:`,
-        JSON.stringify(result).slice(0, 3000)
+        `Subscription check response page ${page} for user ${userId}, channel ${requiredChannel.id}`
       );
 
       if (responseContainsActiveUser(result, expectedUserId)) {
@@ -1975,7 +2016,7 @@ async function handleUpdate(update) {
 
     status = await startDynamicStatus(target, "💬ИИ думает");
 
-    const answer = await askOpenAI(userId, userText);
+    const answer = await runTextOpenAI(() => askOpenAI(userId, userText));
 
     await status.stop();
     status = null;
