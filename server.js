@@ -34,8 +34,8 @@ const REQUIRED_CHANNELS = [
     title: "Канал 2"
   },
   {
-    id: process.env.REQUIRED_CHANNEL_ID_2 || "-74076616285473",
-    url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/join/ufG4-ZgGP_lVbmSohw5ZWND7y5udP2zGDXhS7MI0pmw",
+    id: process.env.REQUIRED_CHANNEL_ID_3 || "-74076216280037437",
+    url: process.env.REQUIRED_CHANNEL_URL_3 || "https://max.ru/join/ufG4-ZgGP_lVbmSohw5ZWND7y5udP2zGDXhS7MI0pmw",
     title: "Канал 3"
   }
 ].filter((channel) => channel.id);
