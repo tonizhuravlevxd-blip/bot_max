@@ -26,7 +26,7 @@ const REQUIRED_CHANNELS = [
   {
     id: process.env.REQUIRED_CHANNEL_ID || "-73970192098593",
     url: process.env.REQUIRED_CHANNEL_URL || "https://max.ru/id236700415542_biz",
-    title: "канал 1"
+    title: "Наш Канал"
   },
   {
     id: process.env.REQUIRED_CHANNEL_ID_2 || "-74096616285473",
