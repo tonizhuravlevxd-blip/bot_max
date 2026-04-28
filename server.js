@@ -31,7 +31,12 @@ const REQUIRED_CHANNELS = [
   {
     id: process.env.REQUIRED_CHANNEL_ID_2 || "-74096616285473",
     url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/join/P7GhkQ-vh7uGxJE2UYOY4QoDG27pJLFh1yfA9tj-ag0",
-    title: "канал 2"
+    title: "Канал 2"
+  },
+  {
+    id: process.env.REQUIRED_CHANNEL_ID_2 || "-74076616285473",
+    url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/join/ufG4-ZgGP_lVbmSohw5ZWND7y5udP2zGDXhS7MI0pmw",
+    title: "Канал 3"
   }
 ].filter((channel) => channel.id);
 
@@ -951,7 +956,7 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
-    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку Проверить.";
+    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку Я подписан.";
 
   // ВАЖНО: кладём userId в payload, чтобы при callback проверять именно пользователя,
   // а не бота или чат.
@@ -972,7 +977,7 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     [
       {
         type: "callback",
-        text: "✅ Проверить",
+        text: "✅ Я подписан(а)",
         payload: checkPayload
       }
     ]
