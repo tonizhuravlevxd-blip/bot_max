@@ -1278,7 +1278,7 @@ const BROADCAST_USE_ALL_BOTS =false
 
 // ID админов, которым разрешена рассылка.
 // Пример:
-// ADMIN_USER_IDS=282278177
+// ADMIN_USER_IDS=282278177,282278177
 const ADMIN_USER_IDS = new Set(
   String(process.env.ADMIN_USER_IDS || process.env.ADMIN_USER_ID || "")
     .split(",")
