@@ -1853,7 +1853,7 @@ async function makeVideoFromWorkerViaHttp({ inputBuffer, prompt }) {
 async function uploadVideoToMaxAndGetToken(videoBuffer) {
   if (!videoBuffer || !videoBuffer.length) throw new Error("Video buffer is empty");
 
-  // 1) получаем URL
+  // step 1: получить uploadUrl и token (token часто приходит здесь)
   const uploadInfo = await maxRequest("/uploads", {
     method: "POST",
     query: { type: "video" }
@@ -1864,31 +1864,48 @@ async function uploadVideoToMaxAndGetToken(videoBuffer) {
     throw new Error(`MAX /uploads(type=video) returned no url: ${JSON.stringify(uploadInfo)}`);
   }
 
-  // 2) грузим файл и получаем token
+  // token чаще всего тут
+  let token = uploadInfo?.token;
+
   const form = new FormData();
   form.append("data", new Blob([videoBuffer], { type: "video/mp4" }), "openai-video.mp4");
 
+  // step 2: загрузка по uploadUrl (обычно возвращает retval, а не token)
   const resp = await fetch(uploadUrl, {
     method: "POST",
-    headers: { Authorization: MAX_BOT_TOKEN },
+    headers: {
+      Authorization: MAX_BOT_TOKEN
+    },
     body: form
   });
 
   const bodyText = await resp.text();
-  let body;
-  try { body = bodyText ? JSON.parse(bodyText) : null; }
-  catch { body = bodyText; }
-
   if (!resp.ok) {
-    throw new Error(`MAX video upload step2 ${resp.status}: ${typeof body === "string" ? body : JSON.stringify(body)}`);
+    throw new Error(`MAX video upload step2 failed ${resp.status}: ${bodyText?.slice(0, 500)}`);
   }
 
-  const token = body?.token;
+  // Fallback: если token не пришёл на step1 — попробуем вытащить из step2
   if (!token) {
-    throw new Error(`MAX video upload no token: ${JSON.stringify(body)}`);
+    // вариант 1: JSON
+    try {
+      const json = JSON.parse(bodyText);
+      token = json?.token;
+    } catch {}
+
+    // вариант 2: <retval>TOKEN</retval>
+    if (!token) {
+      const m = String(bodyText || "").match(/<retval>\s*([\s\S]*?)\s*<\/retval>/i);
+      if (m?.[1]) token = m[1];
+    }
   }
 
-  return token;
+  if (!token) {
+    throw new Error(
+      `MAX video upload no token. step1=${JSON.stringify(uploadInfo)} step2=${bodyText}`
+    );
+  }
+
+  return String(token).trim();
 }
 
 async function sendMaxVideo(target, text, videoBuffer) {
