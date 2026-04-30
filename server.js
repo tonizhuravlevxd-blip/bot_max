@@ -865,14 +865,15 @@ const VIDEO_PROMPT_RE_3 =
   /(?:^|[^\p{L}\p{N}_])(?:оживи|оживить)\s+видео(?:\b|$)/iu;
 
 function isVideoRequest(userText, hasIncomingImage) {
-  const text = String(userText || "").trim();
-  if (!text) return false;
-  if (!hasIncomingImage) return false; // video делаем только из фото
+  if (!hasIncomingImage) return false;
 
+  const t = String(userText || "").toLowerCase();
+
+  // ВАЖНО: сюда добавляем "оживи фото ..." чтобы оно всегда запускало ВИДЕО
   return (
-    VIDEO_PROMPT_RE_1.test(text) ||
-    VIDEO_PROMPT_RE_2.test(text) ||
-    VIDEO_PROMPT_RE_3.test(text)
+    /созда(й|ть)\s*видео/.test(t) ||
+    /оживи(ть)?\s*видео/.test(t) ||
+    /оживи(ть)?\s*фото/.test(t)
   );
 }
 
