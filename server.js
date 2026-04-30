@@ -11,6 +11,12 @@ const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const IMAGE_REQUEST_LIMIT = 8; 
 const CHATGPT_REQUEST_LIMIT = 15;
+const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
+const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
+  process.env.VIDEO_REQUESTS_BEFORE_SUBSCRIPTION || 1
+);
+
+const WORKER_MAKE_VIDEO_URL = process.env.WORKER_MAKE_VIDEO_URL || "";
 
 // После этих значений нужна подписка
 const IMAGE_REQUESTS_BEFORE_SUBSCRIPTION = Number(
@@ -567,7 +573,14 @@ function getUserRequestKey(userId) {
 
 function incrementRequestCount(userId, type) {
   const key = getUserRequestKey(userId);
-  if (!userRequestCounts[key]) userRequestCounts[key] = { images: 0, chatgpt: 0 };
+
+  if (!userRequestCounts[key]) {
+    userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
+  }
+
+  if (!Number.isFinite(userRequestCounts[key][type])) {
+    userRequestCounts[key][type] = 0;
+  }
 
   userRequestCounts[key][type] += 1;
 }
@@ -581,7 +594,7 @@ function getUserRequestCounts(userId) {
   const key = getUserRequestKey(userId);
 
   if (!userRequestCounts[key]) {
-    userRequestCounts[key] = { images: 0, chatgpt: 0 };
+    userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
   }
 
   return userRequestCounts[key];
@@ -608,6 +621,10 @@ function isSubscriptionRequiredForRequest(userId, type) {
     return counts.chatgpt >= CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION;
   }
 
+  if (type === "videos") {
+    return counts.videos >= VIDEO_REQUESTS_BEFORE_SUBSCRIPTION;
+  }
+
   return false;
 }
 
@@ -615,7 +632,7 @@ function resetDailyLimits() {
   // Сбрасываем лимиты ежедневно, можно настроить с помощью cron-job на сброс в полночь
   setInterval(() => {
     Object.keys(userRequestCounts).forEach((key) => {
-      userRequestCounts[key] = { images: 0, chatgpt: 0 };
+      userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
     });
   }, 86400000); // Сбрасываем каждый день (86400000 мс)
 }
@@ -836,6 +853,27 @@ function isImageRequest(userText, hasIncomingImage) {
   if (IMAGE_COMMAND_RE.test(text)) return true;
 
   return IMAGE_VERB_RE.test(text) && IMAGE_OBJECT_RE.test(text);
+}
+
+const VIDEO_PROMPT_RE_1 =
+  /(?:^|[^\p{L}\p{N}_])(?:создай|создать|сделай|сгенерируй|generate|make|create)\s+видео(?:\b|$)/iu;
+
+const VIDEO_PROMPT_RE_2 =
+  /(?:^|[^\p{L}\p{N}_])(?:оживи|оживить)\s+(?:фото|картинку|изображение)(?:\b|$)/iu;
+
+const VIDEO_PROMPT_RE_3 =
+  /(?:^|[^\p{L}\p{N}_])(?:оживи|оживить)\s+видео(?:\b|$)/iu;
+
+function isVideoRequest(userText, hasIncomingImage) {
+  const text = String(userText || "").trim();
+  if (!text) return false;
+  if (!hasIncomingImage) return false; // video делаем только из фото
+
+  return (
+    VIDEO_PROMPT_RE_1.test(text) ||
+    VIDEO_PROMPT_RE_2.test(text) ||
+    VIDEO_PROMPT_RE_3.test(text)
+  );
 }
 
 async function maxRequest(path, options = {}) {
@@ -1788,6 +1826,99 @@ async function sendMaxImage(target, text, imageBuffer) {
   throw lastError;
 }
 
+async function makeVideoFromWorkerViaHttp({ inputBuffer, prompt }) {
+  if (!WORKER_MAKE_VIDEO_URL) {
+    throw new Error("WORKER_MAKE_VIDEO_URL is not set");
+  }
+
+  const form = new FormData();
+  // имя поля должно совпасть с тем, что ожидает python webservice: file + prompt
+  form.append("file", new Blob([inputBuffer], { type: "image/png" }), "in.png");
+  form.append("prompt", String(prompt || ""));
+
+  const resp = await fetch(WORKER_MAKE_VIDEO_URL, {
+    method: "POST",
+    body: form
+  });
+
+  if (!resp.ok) {
+    const t = await resp.text().catch(() => "");
+    throw new Error(`Worker make-video failed: ${resp.status} ${t}`);
+  }
+
+  const ab = await resp.arrayBuffer();
+  return Buffer.from(ab); // mp4 bytes
+}
+
+async function uploadVideoToMaxAndGetToken(videoBuffer) {
+  if (!videoBuffer || !videoBuffer.length) throw new Error("Video buffer is empty");
+
+  // 1) получаем URL
+  const uploadInfo = await maxRequest("/uploads", {
+    method: "POST",
+    query: { type: "video" }
+  });
+
+  const uploadUrl = uploadInfo?.url || uploadInfo?.upload_url;
+  if (!uploadUrl) {
+    throw new Error(`MAX /uploads(type=video) returned no url: ${JSON.stringify(uploadInfo)}`);
+  }
+
+  // 2) грузим файл и получаем token
+  const form = new FormData();
+  form.append("data", new Blob([videoBuffer], { type: "video/mp4" }), "openai-video.mp4");
+
+  const resp = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { Authorization: MAX_BOT_TOKEN },
+    body: form
+  });
+
+  const bodyText = await resp.text();
+  let body;
+  try { body = bodyText ? JSON.parse(bodyText) : null; }
+  catch { body = bodyText; }
+
+  if (!resp.ok) {
+    throw new Error(`MAX video upload step2 ${resp.status}: ${typeof body === "string" ? body : JSON.stringify(body)}`);
+  }
+
+  const token = body?.token;
+  if (!token) {
+    throw new Error(`MAX video upload no token: ${JSON.stringify(body)}`);
+  }
+
+  return token;
+}
+
+async function sendMaxVideo(target, text, videoBuffer) {
+  const token = await uploadVideoToMaxAndGetToken(videoBuffer);
+
+  const attachments = [
+    { type: "video", payload: { token } }
+  ];
+
+  const retries = Number(process.env.VIDEO_SEND_RETRIES || 4);
+  const baseDelayMs = Number(process.env.VIDEO_SEND_RETRY_DELAY_MS || 1200);
+
+  let lastError;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      // по докам: делаем паузу перед отправкой/повтором
+      await sleep(baseDelayMs * (attempt + 1));
+      await sendMaxMessageWithAttachments(target, text || null, attachments);
+      return;
+    } catch (e) {
+      lastError = e;
+      const message = String(e?.message || "");
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) throw e;
+    }
+  }
+
+  throw lastError;
+}
+
 function makeImageCaption(prompt, edited) {
   const safePrompt = String(prompt || "").slice(0, 1000);
 
@@ -1853,6 +1984,51 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
   await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
 }
 
+async function handleVideoRequest(update, target, userText, incomingImageUrl, userId = target.id) {
+  const prompt = String(userText || "").trim();
+
+  if (!incomingImageUrl) {
+    await sendMaxMessage(target, "Пришлите фото и напишите: **оживи фото** или **создай видео**.");
+    return;
+  }
+
+  if (!prompt) {
+    await sendMaxMessage(target, "Фото получил. Теперь напишите промт: **оживи фото** / **создай видео**.");
+    return;
+  }
+
+  // Лимит на день (5 по сценарию). Использует VIDEO_REQUEST_LIMIT env.
+  if (isRequestLimitReached(userId, "videos", VIDEO_REQUEST_LIMIT)) {
+    await sendMaxMessage(
+      target,
+      "🥱Вы достигли лимита на создание **видео** сегодня. Приходите позже и продолжайте."
+    );
+    return;
+  }
+
+  // Подписка после 1 бесплатного видео
+  if (isSubscriptionRequiredForRequest(userId, "videos")) {
+    await sendSubscriptionPrompt(
+      target,
+      userId,
+      `Вы уже создали ${VIDEO_REQUESTS_BEFORE_SUBSCRIPTION} видео бесплатно.`
+    );
+    return;
+  }
+
+  // Инкрементируем ДО генерации
+  incrementRequestCount(userId, "videos");
+
+  const inputImage = await downloadIncomingImage(incomingImageUrl);
+
+  const videoBuffer = await makeVideoFromWorkerViaHttp({
+    inputBuffer: inputImage.buffer,
+    prompt
+  });
+
+  const caption = `🎬 Готово! Сделал видео.\nПромт: ${prompt.slice(0, 700)}`;
+  await sendMaxVideo(target, caption, videoBuffer);
+}
 async function handleUpdate(update) {
   const updateType = update?.update_type;
   const target = getReplyTarget(update);
@@ -2017,6 +2193,16 @@ async function handleUpdate(update) {
 
     lockUserProcessing(userId);
     processingLocked = true;
+
+    if (isVideoRequest(userText, Boolean(incomingImageUrl))) {
+      status = await startDynamicStatus(target, "🎞️Видео создается");
+
+      await handleVideoRequest(update, target, userText, incomingImageUrl, userId);
+
+      await status.stop();
+      status = null;
+      return;
+    }
 
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
       status = await startDynamicStatus(target, "👽Шедевр создается");
