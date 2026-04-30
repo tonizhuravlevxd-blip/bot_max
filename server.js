@@ -648,7 +648,7 @@ const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
 const MAX_WEBHOOK_SECRET = process.env.MAX_WEBHOOK_SECRET || "";
 const MAX_ATTACHMENT_RETRIES = Number(process.env.MAX_ATTACHMENT_RETRIES || 5);
 const MAX_INPUT_IMAGE_BYTES = Number(process.env.MAX_INPUT_IMAGE_BYTES || 20 * 1024 * 1024);
-const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS || 2000);
+const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS || 1500);
 
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
@@ -2074,7 +2074,7 @@ async function handleUpdate(update) {
     if (updateType === "bot_started") {
       await sendMaxMessage(
         target,
-        "**Здравствуйте**. Напишите вопрос или попросите **создать фото/картинку**. Например: создай фото кота в космосе."
+        "**Здравствуйте**. Напишите вопрос или попросите **создать фото/картинку/видео**. Например: создай фото кота или оживи фото."
       );
       return;
     }
