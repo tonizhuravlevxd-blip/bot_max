@@ -6,8 +6,6 @@ import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.responses import Response
 
-from .video_maker import make_video_from_image_bgr, make_video_from_image_bgr  # just in case lint
-
 
 from video_maker import make_video_from_image_b64  # или как у тебя называется функция
 
