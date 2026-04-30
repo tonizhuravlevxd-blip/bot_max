@@ -2015,7 +2015,7 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  // Лимит на день (5 по сценарию). Использует VIDEO_REQUEST_LIMIT env.
+  // Лимит на день (5 по сценарию — у тебя VIDEO_REQUEST_LIMIT)
   if (isRequestLimitReached(userId, "videos", VIDEO_REQUEST_LIMIT)) {
     await sendMaxMessage(
       target,
@@ -2034,8 +2034,9 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  // Инкрементируем ДО генерации
+  // Инкремент ДО генерации
   incrementRequestCount(userId, "videos");
+  const isFirstVideoToday = (getUserRequestCounts(userId)?.videos === 1);
 
   const inputImage = await downloadIncomingImage(incomingImageUrl);
 
@@ -2046,6 +2047,29 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
 
   const caption = `🎬 Готово! Сделал видео.\nПромт: ${prompt.slice(0, 700)}`;
   await sendMaxVideo(target, caption, videoBuffer);
+
+  // ✅ Подсказка после 1-го готового видео
+  if (isFirstVideoToday) {
+    await sendMaxMessage(
+      target,
+      [
+        "🧠 **Как использовать видео дальше:**",
+        "",
+        "1) Отправь **фото** + **промт**.",
+        "2) Пиши: **«оживи фото»** (или «создай видео»).",
+        "3) Можно добавлять эффекты прямо в промт:",
+        "",
+        "🌧️ дождь, ❄️ снег, 🌫️ туман/дымка, 🔥 пламя/огонь, 💡 неон",
+        "🌀 глич (glitch), 🎬 кинематографично, 🌙 мягко/спокойно, 🔎 зум/макро",
+        "↩️ и ещё: слово «поворот» можно добавлять для вращения.",
+        "",
+        "Пример:",
+        "👉 `Оживи фото дождь кинематографично`",
+        "👉 `Оживи фото снег мягко`",
+        "👉 `Оживи фото неон глич`"
+      ].join("\n")
+    );
+  }
 }
 async function handleUpdate(update) {
   const updateType = update?.update_type;
