@@ -2095,13 +2095,14 @@ async function handleUpdate(update) {
 
   try {
     if (updateType === "bot_started") {
+      const firstName = getUserFirstName(update);
       const namePrefix = firstName ? `, ${firstName}!` : "!";
 
       await sendMaxMessage(
         target,
         `🙋🏻‍♂️ **Привет${namePrefix}**
 
-Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с <a href='https://disk.yandex.ru/i/e3gVPfUa3xKyiQ'>Офертой</a> и <a href='https://disk.yandex.ru/i/LHakrABNtGiVMw'>Политикой персональных данных</a>.
+Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/e3gVPfUa3xKyiQ) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).
 
 Напишите вопрос или попросите **создать фото/картинку/видео**. Например: создай фото кота или оживи фото.`
       );
