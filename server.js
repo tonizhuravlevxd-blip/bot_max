@@ -2084,9 +2084,8 @@ async function handleUpdate(update) {
     return;
   }
 
-    const userId = getStableUserId(update, target);
+  const userId = getStableUserId(update, target);
   const firstName = getUserFirstName(update);
-  
 
   const broadcastUserId = getRealUserIdForBroadcast(update, target);
 
@@ -2094,11 +2093,11 @@ async function handleUpdate(update) {
     console.warn("Failed to register bot user in DB:", error?.message || error);
   });
 
-try {
-  if (updateType === "bot_started") {
-    await sendMaxMessage(
-      target,
-      `Привет {{ first_name }}🫠
+  try {
+    if (updateType === "bot_started") {
+      await sendMaxMessage(
+        target,
+        `Привет {{ first_name }}🫠
 
 Осуществляя работу с сервисом с помощью *Max-бота*, вы подтверждаете, что ознакомлены и согласны с <a href='https://disk.yandex.ru/i/e3gVPfUa3xKyiQ'>Офертой</a> и <a href='https://disk.yandex.ru/i/LHakrABNtGiVMw'>Политикой персональных данных</a>
 
@@ -2107,11 +2106,13 @@ try {
 🎬Видео-эффект - *Бесплатно*
 
 **Здравствуйте**. Напишите вопрос или попросите **создать фото/картинку/видео**. Например: создай фото кота или оживи фото.`
-    );
-    return;
+      );
+      return;
+    }
+  } catch (error) {
+    console.error("Error while handling update:", error);
   }
 }
-
     const userText = getIncomingText(update);
     const callbackPayload = getCallbackPayload(update);
     const callbackId = getCallbackId(update);
