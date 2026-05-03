@@ -1087,7 +1087,8 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
     body: {
       text: text || null,
       attachments,
-      notify: true
+      notify: true,
+      format: "markdown" // включаем Markdown и для сообщений с вложениями
     }
   });
 }
