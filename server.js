@@ -1289,19 +1289,43 @@ function extractMembersFromMaxResponse(body) {
   ];
 
   for (const candidate of candidates) {
+    if (!candidate) continue;
+
+    // Если это уже массив — возвращаем его
     if (Array.isArray(candidate)) {
       return candidate;
     }
+
+    // Если это объект (map user_id -> member) — берём его значения
+    if (typeof candidate === "object") {
+      const values = Object.values(candidate);
+      if (values.length) return values;
+    }
   }
 
+  // Если сам body — массив
   if (Array.isArray(body)) {
     return body;
+  }
+
+  // Если в корне объект, пробуем найти в нём первый массив
+  if (typeof body === "object") {
+    for (const value of Object.values(body)) {
+      if (Array.isArray(value)) {
+        return value;
+      }
+    }
   }
 
   return [];
 }
 
 function getMemberUserId(member) {
+  // Если элемент — просто число или строка, считаем, что это user_id
+  if (typeof member === "string" || typeof member === "number") {
+    return String(member);
+  }
+
   return (
     member?.user_id ||
     member?.userId ||
@@ -1321,6 +1345,11 @@ function getMemberUserId(member) {
 
 function isMemberActive(member) {
   if (!member) return false;
+
+  // Если это примитив (строка/число) — считаем, что это активный user_id
+  if (typeof member === "string" || typeof member === "number") {
+    return true;
+  }
 
   const status = String(
     member?.status ||
@@ -1489,8 +1518,10 @@ async function checkRequiredChannelSubscription(userId) {
   if (isSubscriptionVerified(userId)) return true;
 
   if (!REQUIRED_CHANNELS.length) {
-    console.warn("REQUIRED_CHANNELS is empty. Cannot check subscription.");
-    return false;
+    console.warn(
+      "REQUIRED_CHANNELS is empty. Skipping subscription check — access is allowed."
+    );
+    return true;
   }
 
   for (const requiredChannel of REQUIRED_CHANNELS) {
