@@ -1024,6 +1024,11 @@ async function answerMaxCallback(callbackId, notification = "") {
 
   const text = String(notification || "").trim();
 
+  // Если текста нет — ничего не отправляем, чтобы не ловить 400 от MAX
+  if (!text) {
+    return false;
+  }
+
   try {
     await maxRequest("/answers", {
       method: "POST",
@@ -1031,27 +1036,13 @@ async function answerMaxCallback(callbackId, notification = "") {
         callback_id: callbackId
       },
       body: {
-        notification: text || null
+        notification: text
       }
     });
 
     return true;
-  } catch (firstError) {
-    console.warn("MAX callback answer with query failed:", firstError?.message || firstError);
-  }
-
-  try {
-    await maxRequest("/answers", {
-      method: "POST",
-      body: {
-        callback_id: callbackId,
-        notification: text || null
-      }
-    });
-
-    return true;
-  } catch (secondError) {
-    console.warn("MAX callback answer with body failed:", secondError?.message || secondError);
+  } catch (error) {
+    console.warn("MAX callback answer failed:", error?.message || error);
     return false;
   }
 }
@@ -1115,7 +1106,7 @@ function buildMainMenuButtons() {
 async function sendMainMenu(target, prefixText = "") {
   const text =
     prefixText ||
-    "Выбери, что хочешь сделать:\n\n🖼️ Создать фото\n🎬 Оживить фото (демо)";
+    "Выбери, что хочешь сделать или пиши прямо в чат✏️:\n\n🖼️ Создать фото\n🎬 Оживить фото (демо)";
 
   const attachments = [
     {
@@ -2373,7 +2364,7 @@ async function handleUpdate(update) {
       const text =
         `🙋🏻‍♂️ **Привет${namePrefix}**\n\n` +
         "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/e3gVPfUa3xKyiQ) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
-        "Напишите вопрос или выберите, что хотите сделать ниже:";
+        "Напишите вопрос прямо в **ЧАТ**✍ или выберите, что хотите сделать ниже:";
 
       await sendMainMenu(target, text);
 
@@ -2427,29 +2418,21 @@ async function handleUpdate(update) {
         return;
       }
 
-      // 2) Меню: Создать фото
+            // 2) Меню: Создать фото
       if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
-        if (callbackId) {
-          await answerMaxCallback(callbackId, "");
-        }
+        // Для меню уведомление не нужно — просто присылаем подсказку
         await sendCreatePhotoHelp(target);
         return;
       }
 
       // 3) Меню: Оживить фото (демо)
       if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
-        if (callbackId) {
-          await answerMaxCallback(callbackId, "");
-        }
         await sendCreateVideoHelp(target);
         return;
       }
 
       // 4) Кнопка "Назад" — возвращаем к двум кнопкам
       if (callbackPayload === MENU_BACK_PAYLOAD) {
-        if (callbackId) {
-          await answerMaxCallback(callbackId, "");
-        }
         await sendMainMenu(target);
         return;
       }
