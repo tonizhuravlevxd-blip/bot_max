@@ -1212,24 +1212,21 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     }
   ];
 
-  // 1) Если у пользователя уже есть сообщение с кнопками — пробуем его ОТРЕДАКТИРОВАТЬ,
-  //    чтобы не плодить новые такие же сообщения
+  // Если уже было старое сообщение с кнопкой — пробуем его УДАЛИТЬ,
+  // чтобы не было "мёртвых" кнопок, по которым не приходит callback.
   const existingMessageId = userSubscriptionMessages.get(key);
 
   if (existingMessageId) {
-    try {
-      await editMaxMessage(existingMessageId, text);
-      return;
-    } catch (editError) {
+    deleteMaxMessage(existingMessageId).catch((err) => {
       console.warn(
-        "Failed to edit existing subscription message, will send new one:",
-        editError?.message || editError
+        "Failed to delete old subscription message:",
+        err?.message || err
       );
-      userSubscriptionMessages.delete(key);
-    }
+    });
+    userSubscriptionMessages.delete(key);
   }
 
-  // 2) Если редактирование не удалось или это первый раз — отправляем НОВОЕ сообщение
+  // Отправляем НОВОЕ сообщение с актуальной кнопкой "Я подписан(а)"
   try {
     const result = await sendMaxMessageWithAttachments(target, text, attachments);
     const messageId = extractMaxMessageId(result);
