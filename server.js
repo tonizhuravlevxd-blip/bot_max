@@ -1024,11 +1024,6 @@ async function answerMaxCallback(callbackId, notification = "") {
 
   const text = String(notification || "").trim();
 
-  // Если текста нет — ничего не отправляем, чтобы не ловить 400 от MAX
-  if (!text) {
-    return false;
-  }
-
   try {
     await maxRequest("/answers", {
       method: "POST",
@@ -1036,13 +1031,27 @@ async function answerMaxCallback(callbackId, notification = "") {
         callback_id: callbackId
       },
       body: {
-        notification: text
+        notification: text || null
       }
     });
 
     return true;
-  } catch (error) {
-    console.warn("MAX callback answer failed:", error?.message || error);
+  } catch (firstError) {
+    console.warn("MAX callback answer with query failed:", firstError?.message || firstError);
+  }
+
+  try {
+    await maxRequest("/answers", {
+      method: "POST",
+      body: {
+        callback_id: callbackId,
+        notification: text || null
+      }
+    });
+
+    return true;
+  } catch (secondError) {
+    console.warn("MAX callback answer with body failed:", secondError?.message || secondError);
     return false;
   }
 }
@@ -1172,14 +1181,11 @@ async function sendCreateVideoHelp(target) {
 }
 
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
-  const key = String(userId);
-
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
-    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку «Я подписан(а)».";
+    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку Я подписан.";
 
-  // ВАЖНО: кладём userId в payload, чтобы при callback проверять именно пользователя,
-  // а не бота или чат.
+  // userId кладём в payload, чтобы по нему потом проверять
   const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
 
   const subscribeButtons = REQUIRED_CHANNELS
@@ -1212,28 +1218,8 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     }
   ];
 
-  // Если уже было старое сообщение с кнопкой — пробуем его УДАЛИТЬ,
-  // чтобы не было "мёртвых" кнопок, по которым не приходит callback.
-  const existingMessageId = userSubscriptionMessages.get(key);
-
-  if (existingMessageId) {
-    deleteMaxMessage(existingMessageId).catch((err) => {
-      console.warn(
-        "Failed to delete old subscription message:",
-        err?.message || err
-      );
-    });
-    userSubscriptionMessages.delete(key);
-  }
-
-  // Отправляем НОВОЕ сообщение с актуальной кнопкой "Я подписан(а)"
   try {
-    const result = await sendMaxMessageWithAttachments(target, text, attachments);
-    const messageId = extractMaxMessageId(result);
-
-    if (messageId) {
-      userSubscriptionMessages.set(key, messageId);
-    }
+    await sendMaxMessageWithAttachments(target, text, attachments);
   } catch (error) {
     console.warn(
       "Failed to send subscription buttons, fallback to text:",
@@ -1427,11 +1413,6 @@ async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
   const expectedUserId = String(userId);
 
   try {
-    /*
-      Проверяем участников канала:
-      GET /chats/{channelId}/members
-    */
-
     let marker = "";
     let page = 0;
     const maxPages = 20;
@@ -1440,7 +1421,6 @@ async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
       page += 1;
 
       const query = {};
-
       if (marker) {
         query.marker = marker;
       }
@@ -1469,12 +1449,10 @@ async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
         console.log(
           `Subscription check result for user ${userId}, channel ${requiredChannel.id}: true`
         );
-
         return true;
       }
 
       const nextMarker = getNextMembersMarker(result);
-
       if (!nextMarker || nextMarker === marker) {
         break;
       }
@@ -1485,7 +1463,6 @@ async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
     console.log(
       `Subscription check result for user ${userId}, channel ${requiredChannel.id}: false`
     );
-
     return false;
   } catch (error) {
     const message = String(error?.message || error);
@@ -1515,10 +1492,8 @@ async function checkRequiredChannelSubscription(userId) {
   if (isSubscriptionVerified(userId)) return true;
 
   if (!REQUIRED_CHANNELS.length) {
-    console.warn(
-      "REQUIRED_CHANNELS is empty. Skipping subscription check — access is allowed."
-    );
-    return true;
+    console.warn("REQUIRED_CHANNELS is empty. Cannot check subscription.");
+    return false;
   }
 
   for (const requiredChannel of REQUIRED_CHANNELS) {
@@ -1541,10 +1516,8 @@ async function checkRequiredChannelSubscription(userId) {
 }
 
 async function handleSubscriptionCheck(target, userId, callbackId = "") {
-  const key = String(userId);
   const subscribed = await checkRequiredChannelSubscription(userId);
 
-  // Пользователь ПОДПИСАН
   if (subscribed) {
     markSubscriptionVerified(userId);
 
@@ -1555,31 +1528,25 @@ async function handleSubscriptionCheck(target, userId, callbackId = "") {
       );
     }
 
-    const successText =
-      "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом.";
-
-    // По твоему запросу: ВСЕГДА отправляем НОВОЕ сообщение с подтверждением,
-    // чтобы пользователь точно увидел, что всё хорошо.
-    await sendMaxMessage(target, successText);
-
-    // Старый message_id с кнопкой больше не нужен
-    userSubscriptionMessages.delete(key);
+    await sendMaxMessage(
+      target,
+      "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом."
+    );
 
     return true;
   }
 
-  // Пользователь ЕЩЁ НЕ ПОДПИСАН
   if (callbackId) {
     await answerMaxCallback(
       callbackId,
-      "❌ Пока не вижу подписку. Подпишитесь и нажмите «Я подписан(а)» ещё раз."
+      "❌ Пока не вижу подписку. Подпишитесь и нажмите «Проверить» ещё раз."
     );
   }
 
   await sendSubscriptionPrompt(
     target,
     userId,
-    "❌ Пока не вижу подписку на все обязательные каналы."
+    "❌ Пока не вижу подписку на канал."
   );
 
   return false;
@@ -2406,7 +2373,7 @@ async function handleUpdate(update) {
     const isCallbackUpdate =
       updateType === "message_callback" ||
       Boolean(callbackId) ||
-      Boolean(update?.callback);
+      Boolean(callbackPayload);
 
     // Отдельная обработка callback-кнопок
     if (isCallbackUpdate) {
@@ -2417,19 +2384,14 @@ async function handleUpdate(update) {
         target
       });
 
-      // 1) Проверка подписки
+      // 1) Проверка подписки по кнопке "Я подписан(а)"
       if (isSubscriptionCheckPayload(callbackPayload)) {
-        const payloadUserId = getUserIdFromSubscriptionPayload(callbackPayload);
+        const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
 
-        // ЖЁСТКО: для кнопки "Я подписан(а)" используем только callback.user.user_id.
-        const callbackUserId = String(update?.callback?.user?.user_id || "").trim();
-
-        if (!callbackUserId) {
+        if (!userIdFromPayload) {
           console.warn(
-            "Subscription callback has no callback.user.user_id. PayloadUserId:",
-            payloadUserId,
-            "stableUserId:",
-            userId
+            "Subscription callback has no userId in payload. Payload:",
+            callbackPayload
           );
 
           if (callbackId) {
@@ -2447,18 +2409,11 @@ async function handleUpdate(update) {
           return;
         }
 
-        console.log(
-          "Subscription check will use user_id (from callback.user):",
-          callbackUserId,
-          "payloadUserId:",
-          payloadUserId,
-          "stableUserId:",
-          userId
-        );
-
-        await handleSubscriptionCheck(target, callbackUserId, callbackId);
+        await handleSubscriptionCheck(target, userIdFromPayload, callbackId);
         return;
       }
+
+
             // 2) Меню: Создать фото
       if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
         // Для меню уведомление не нужно — просто присылаем подсказку
