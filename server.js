@@ -49,8 +49,17 @@ const REQUIRED_CHANNELS = [
 // Payload кнопки "Проверить"
 const SUBSCRIPTION_CHECK_PAYLOAD = "check_subscription";
 
+// Пейлоады для основного меню
+const MENU_CREATE_PHOTO_PAYLOAD = "menu_create_photo";
+const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
+const MENU_BACK_PAYLOAD = "menu_back";
+
 // Пользователи, которые уже прошли проверку подписки
 const subscriptionVerifiedUsers = new Set();
+
+// Сообщение с кнопкой "Я подписан(а)" для каждого пользователя
+// key: userId(string) -> messageId(string)
+const userSubscriptionMessages = new Map();
 
 const userRequestCounts = {};
 
@@ -1083,10 +1092,99 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
   });
 }
 
+function buildMainMenuButtons() {
+  return [
+    [
+      {
+        type: "callback",
+        text: "🖼️ Создать фото",
+        payload: MENU_CREATE_PHOTO_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
+        text: "🎬 Оживить фото (демо)",
+        payload: MENU_CREATE_VIDEO_PAYLOAD
+      }
+    ]
+  ];
+}
+
+async function sendMainMenu(target, prefixText = "") {
+  const text =
+    prefixText ||
+    "Выбери, что хочешь сделать:\n\n🖼️ Создать фото\n🎬 Оживить фото (демо)";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildMainMenuButtons()
+      }
+    }
+  ];
+
+  return sendMaxMessageWithAttachments(target, text, attachments);
+}
+
+function buildBackButtonKeyboard() {
+  return [
+    [
+      {
+        type: "callback",
+        text: "⬅️ Назад",
+        payload: MENU_BACK_PAYLOAD
+      }
+    ]
+  ];
+}
+
+async function sendCreatePhotoHelp(target) {
+  const text =
+    "🖼️ *Создать фото*\n\n" +
+    "Отправь:\n" +
+    "• фото + промт (что изменить/добавить)\n" +
+    "или\n" +
+    "• просто промт с текстом вида: `создай фото/картинку ...`";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildBackButtonKeyboard()
+      }
+    }
+  ];
+
+  return sendMaxMessageWithAttachments(target, text, attachments);
+}
+
+async function sendCreateVideoHelp(target) {
+  const text =
+    "🎬 *Оживить фото (демо)*\n\n" +
+    "1) Отправь фото.\n" +
+    "2) Напиши в сообщении, например: `оживи фото` или `создай видео`.\n" +
+    "3) Можно добавлять эффекты прямо в промт (дождь, снег, неон и т.д.).";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildBackButtonKeyboard()
+      }
+    }
+  ];
+
+  return sendMaxMessageWithAttachments(target, text, attachments);
+}
+
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
+  const key = String(userId);
+
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
-    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку Я подписан.";
+    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку «Я подписан(а)».";
 
   // ВАЖНО: кладём userId в payload, чтобы при callback проверять именно пользователя,
   // а не бота или чат.
@@ -1122,8 +1220,31 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     }
   ];
 
+  // 1) Если у пользователя уже есть сообщение с кнопками — пробуем его ОТРЕДАКТИРОВАТЬ,
+  //    чтобы не плодить новые такие же сообщения
+  const existingMessageId = userSubscriptionMessages.get(key);
+
+  if (existingMessageId) {
+    try {
+      await editMaxMessage(existingMessageId, text);
+      return;
+    } catch (editError) {
+      console.warn(
+        "Failed to edit existing subscription message, will send new one:",
+        editError?.message || editError
+      );
+      userSubscriptionMessages.delete(key);
+    }
+  }
+
+  // 2) Если редактирование не удалось или это первый раз — отправляем НОВОЕ сообщение
   try {
-    await sendMaxMessageWithAttachments(target, text, attachments);
+    const result = await sendMaxMessageWithAttachments(target, text, attachments);
+    const messageId = extractMaxMessageId(result);
+
+    if (messageId) {
+      userSubscriptionMessages.set(key, messageId);
+    }
   } catch (error) {
     console.warn(
       "Failed to send subscription buttons, fallback to text:",
@@ -1400,8 +1521,10 @@ async function checkRequiredChannelSubscription(userId) {
 }
 
 async function handleSubscriptionCheck(target, userId, callbackId = "") {
+  const key = String(userId);
   const subscribed = await checkRequiredChannelSubscription(userId);
 
+  // Пользователь ПОДПИСАН
   if (subscribed) {
     markSubscriptionVerified(userId);
 
@@ -1412,25 +1535,31 @@ async function handleSubscriptionCheck(target, userId, callbackId = "") {
       );
     }
 
-    await sendMaxMessage(
-      target,
-      "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом."
-    );
+    const successText =
+      "✅ Подписка проверена. Доступ открыт, можете продолжать пользоваться ботом.";
+
+    // По твоему запросу: ВСЕГДА отправляем НОВОЕ сообщение с подтверждением,
+    // чтобы пользователь точно увидел, что всё хорошо.
+    await sendMaxMessage(target, successText);
+
+    // Старый message_id с кнопкой больше не нужен
+    userSubscriptionMessages.delete(key);
 
     return true;
   }
 
+  // Пользователь ЕЩЁ НЕ ПОДПИСАН
   if (callbackId) {
     await answerMaxCallback(
       callbackId,
-      "❌ Пока не вижу подписку. Подпишитесь и нажмите «Проверить» ещё раз."
+      "❌ Пока не вижу подписку. Подпишитесь и нажмите «Я подписан(а)» ещё раз."
     );
   }
 
   await sendSubscriptionPrompt(
     target,
     userId,
-    "❌ Пока не вижу подписку на канал."
+    "❌ Пока не вижу подписку на все обязательные каналы."
   );
 
   return false;
@@ -1905,7 +2034,16 @@ async function uploadImageToMax(imageBuffer) {
 
 async function sendMaxImage(target, text, imageBuffer) {
   const payload = await uploadImageToMax(imageBuffer);
-  const attachments = [{ type: "image", payload }];
+
+  const attachments = [
+    { type: "image", payload },
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildBackButtonKeyboard()
+      }
+    }
+  ];
 
   let lastError;
 
@@ -2015,7 +2153,13 @@ async function sendMaxVideo(target, text, videoBuffer) {
   const token = await uploadVideoToMaxAndGetToken(videoBuffer);
 
   const attachments = [
-    { type: "video", payload: { token } }
+    { type: "video", payload: { token } },
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildBackButtonKeyboard()
+      }
+    }
   ];
 
   const retries = Number(process.env.VIDEO_SEND_RETRIES || 4);
@@ -2225,14 +2369,12 @@ async function handleUpdate(update) {
       const firstName = getUserFirstName(update);
       const namePrefix = firstName ? `, ${firstName}!` : "!";
 
-      await sendMaxMessage(
-        target,
-        `🙋🏻‍♂️ **Привет${namePrefix}**
+      const text =
+        `🙋🏻‍♂️ **Привет${namePrefix}**\n\n` +
+        "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/e3gVPfUa3xKyiQ) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
+        "Напишите вопрос или выберите, что хотите сделать ниже:";
 
-Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/e3gVPfUa3xKyiQ) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).
-
-Напишите вопрос или попросите **создать фото/картинку/видео**. Например: создай фото кота или оживи фото.`
-      );
+      await sendMainMenu(target, text);
 
       return;
     }
@@ -2255,6 +2397,7 @@ async function handleUpdate(update) {
         target
       });
 
+      // 1) Проверка подписки
       if (isSubscriptionCheckPayload(callbackPayload)) {
         const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
 
@@ -2283,6 +2426,34 @@ async function handleUpdate(update) {
         return;
       }
 
+      // 2) Меню: Создать фото
+      if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
+        if (callbackId) {
+          await answerMaxCallback(callbackId, "");
+        }
+        await sendCreatePhotoHelp(target);
+        return;
+      }
+
+      // 3) Меню: Оживить фото (демо)
+      if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
+        if (callbackId) {
+          await answerMaxCallback(callbackId, "");
+        }
+        await sendCreateVideoHelp(target);
+        return;
+      }
+
+      // 4) Кнопка "Назад" — возвращаем к двум кнопкам
+      if (callbackPayload === MENU_BACK_PAYLOAD) {
+        if (callbackId) {
+          await answerMaxCallback(callbackId, "");
+        }
+        await sendMainMenu(target);
+        return;
+      }
+
+      // 5) Неизвестная кнопка
       if (callbackId) {
         await answerMaxCallback(callbackId, "Неизвестная кнопка.");
       }
