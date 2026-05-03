@@ -9,8 +9,8 @@ const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const IMAGE_REQUEST_LIMIT = 8; 
-const CHATGPT_REQUEST_LIMIT = 15;
+const IMAGE_REQUEST_LIMIT = 6; 
+const CHATGPT_REQUEST_LIMIT = 10;
 const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
 const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
   process.env.VIDEO_REQUESTS_BEFORE_SUBSCRIPTION || 1
@@ -24,7 +24,7 @@ const IMAGE_REQUESTS_BEFORE_SUBSCRIPTION = Number(
 );
 
 const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
-  process.env.CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION || 4
+  process.env.CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION || 3
 );
 
 // Каналы MAX, на которые нужна обязательная подписка
@@ -40,8 +40,8 @@ const REQUIRED_CHANNELS = [
     title: "Канал 2"
   },
   {
-    id: process.env.REQUIRED_CHANNEL_ID_3 || "-74076280037437",
-    url: process.env.REQUIRED_CHANNEL_URL_3 || "https://max.ru/join/ufG4-ZgGP_lVbmSohw5ZWND7y5udP2zGDXhS7MI0pmw",
+    id: process.env.REQUIRED_CHANNEL_ID_3 || "-74290803017086",
+    url: process.env.REQUIRED_CHANNEL_URL_3 || "https://max.ru/id231711659887_biz",
     title: "Канал 3"
   }
 ].filter((channel) => channel.id);
@@ -183,6 +183,34 @@ async function registerBotUserInDb(userId) {
   );
 
   return true;
+}
+
+async function initLimitsDb() {
+  if (!dbPool) return;
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS max_bot_limits (
+      user_id TEXT NOT NULL,
+      bot_key TEXT NOT NULL,
+      date DATE NOT NULL,
+      images INTEGER NOT NULL DEFAULT 0,
+      chatgpt INTEGER NOT NULL DEFAULT 0,
+      videos INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (user_id, bot_key, date)
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_limits_user_date
+    ON max_bot_limits (user_id, date)
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_limits_bot_key
+    ON max_bot_limits (bot_key)
+  `);
+
+  console.log("Limits DB initialized");
 }
 
 async function getBroadcastRecipientsFromDb() {
@@ -568,36 +596,91 @@ setInterval(() => {
 }, 10 * 60_000).unref?.();
 
 function getUserRequestKey(userId) {
-  return userId; // Можно использовать любой идентификатор пользователя (например, userId или chatId)
+  return String(userId || "unknown");
 }
 
-function incrementRequestCount(userId, type) {
-  const key = getUserRequestKey(userId);
-
-  if (!userRequestCounts[key]) {
-    userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
-  }
-
-  if (!Number.isFinite(userRequestCounts[key][type])) {
-    userRequestCounts[key][type] = 0;
-  }
-
-  userRequestCounts[key][type] += 1;
+function getTodayDate() {
+  // Формат YYYY-MM-DD
+  return new Date().toISOString().slice(0, 10);
 }
 
-function isRequestLimitReached(userId, type, limit) {
-  const key = getUserRequestKey(userId);
-  return userRequestCounts[key]?.[type] >= limit;
-}
-
-function getUserRequestCounts(userId) {
+// Асинхронно получаем лимиты пользователя на сегодня
+async function getUserRequestCounts(userId) {
   const key = getUserRequestKey(userId);
 
-  if (!userRequestCounts[key]) {
-    userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
+  // Fallback на память, если нет БД
+  if (!dbPool) {
+    if (!userRequestCounts[key]) {
+      userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
+    }
+    return userRequestCounts[key];
   }
 
-  return userRequestCounts[key];
+  const today = getTodayDate();
+
+  const result = await dbPool.query(
+    `
+      SELECT images, chatgpt, videos
+      FROM ${LIMITS_TABLE}
+      WHERE user_id = $1 AND bot_key = $2 AND date = $3
+    `,
+    [key, BOT_KEY, today]
+  );
+
+  if (!result.rows.length) {
+    return { images: 0, chatgpt: 0, videos: 0 };
+  }
+
+  const row = result.rows[0];
+
+  return {
+    images: Number(row.images) || 0,
+    chatgpt: Number(row.chatgpt) || 0,
+    videos: Number(row.videos) || 0
+  };
+}
+
+// Увеличиваем счётчик нужного типа
+async function incrementRequestCount(userId, type) {
+  const key = getUserRequestKey(userId);
+
+  const allowedTypes = ["images", "chatgpt", "videos"];
+  if (!allowedTypes.includes(type)) {
+    throw new Error(`Unknown request type for limits: ${type}`);
+  }
+
+  // Fallback на память
+  if (!dbPool) {
+    if (!userRequestCounts[key]) {
+      userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
+    }
+    if (!Number.isFinite(userRequestCounts[key][type])) {
+      userRequestCounts[key][type] = 0;
+    }
+    userRequestCounts[key][type] += 1;
+    return;
+  }
+
+  const today = getTodayDate();
+
+  // Динамически подставляем нужную колонку (images/chatgpt/videos)
+  const col = type;
+
+  await dbPool.query(
+    `
+      INSERT INTO ${LIMITS_TABLE} (user_id, bot_key, date, ${col})
+      VALUES ($1, $2, $3, 1)
+      ON CONFLICT (user_id, bot_key, date)
+      DO UPDATE SET ${col} = ${LIMITS_TABLE}.${col} + 1
+    `,
+    [key, BOT_KEY, today]
+  );
+}
+
+// Проверяем, достигнут ли лимит по типу
+async function isRequestLimitReached(userId, type, limit) {
+  const counts = await getUserRequestCounts(userId);
+  return (counts[type] || 0) >= limit;
 }
 
 function isSubscriptionVerified(userId) {
@@ -608,10 +691,11 @@ function markSubscriptionVerified(userId) {
   subscriptionVerifiedUsers.add(String(userId));
 }
 
-function isSubscriptionRequiredForRequest(userId, type) {
+// Проверяем, нужна ли подписка для текущего запроса
+async function isSubscriptionRequiredForRequest(userId, type) {
   if (isSubscriptionVerified(userId)) return false;
 
-  const counts = getUserRequestCounts(userId);
+  const counts = await getUserRequestCounts(userId);
 
   if (type === "images") {
     return counts.images >= IMAGE_REQUESTS_BEFORE_SUBSCRIPTION;
@@ -628,13 +712,15 @@ function isSubscriptionRequiredForRequest(userId, type) {
   return false;
 }
 
+// Сбрасываем лимиты только для in-memory варианта (когда нет БД)
 function resetDailyLimits() {
-  // Сбрасываем лимиты ежедневно, можно настроить с помощью cron-job на сброс в полночь
   setInterval(() => {
-    Object.keys(userRequestCounts).forEach((key) => {
-      userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
-    });
-  }, 86400000); // Сбрасываем каждый день (86400000 мс)
+    if (!dbPool) {
+      Object.keys(userRequestCounts).forEach((key) => {
+        userRequestCounts[key] = { images: 0, chatgpt: 0, videos: 0 };
+      });
+    }
+  }, 86400000); // каждый день
 }
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
@@ -642,6 +728,11 @@ const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
 const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
 const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "medium";
 const OPENAI_IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
+
+
+const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || "gpt-image-1.5"; // сюда можно поставить нужную модель
+const FIRST_IMAGE_SIZE = process.env.FIRST_IMAGE_SIZE || "1024x1024";
+const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || "low";
 
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
@@ -1384,7 +1475,7 @@ const DATABASE_URL = process.env.DATABASE_URL || "";
 // Уникальное имя этого бота в общей базе.
 // Если хочешь отделять пользователей разных ботов — оставь уникальным.
 const BOT_KEY = process.env.BOT_KEY || "max_openai_bot";
-
+const LIMITS_TABLE = "max_bot_limits";
 const BROADCAST_USE_ALL_BOTS = false;
 
 // ID админов, которым разрешена рассылка.
@@ -1557,31 +1648,36 @@ function extractImageBase64(data) {
   return fromResponsesApi[0] || "";
 }
 
-function buildImageJsonBody(prompt) {
+function buildImageJsonBody(prompt, options = {}) {
+  const model = options.model || OPENAI_IMAGE_MODEL;
+  const size = options.size || OPENAI_IMAGE_SIZE;
+  const quality = options.quality || OPENAI_IMAGE_QUALITY;
+  const outputFormat = options.output_format || OPENAI_IMAGE_OUTPUT_FORMAT;
+
   const body = {
-    model: OPENAI_IMAGE_MODEL,
+    model,
     prompt,
     n: 1,
-    size: OPENAI_IMAGE_SIZE,
-    quality: OPENAI_IMAGE_QUALITY,
-    output_format: OPENAI_IMAGE_OUTPUT_FORMAT
+    size,
+    quality,
+    output_format: outputFormat
   };
 
-  if (OPENAI_IMAGE_MODEL.startsWith("dall-e")) {
+  if (model.startsWith("dall-e")) {
     body.response_format = "b64_json";
   }
 
   return body;
 }
 
-async function generateOpenAIImage(prompt) {
+async function generateOpenAIImage(prompt, options = {}) {
   const response = await fetch(`${OPENAI_API_BASE}/images/generations`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${OPENAI_API_KEY}`
     },
-    body: JSON.stringify(buildImageJsonBody(prompt))
+    body: JSON.stringify(buildImageJsonBody(prompt, options))
   });
 
   const data = await response.json().catch(() => null);
@@ -1598,16 +1694,35 @@ async function generateOpenAIImage(prompt) {
   return Buffer.from(imageBase64, "base64");
 }
 
-async function editOpenAIImage(prompt, inputImage) {
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(`OpenAI image API ${response.status}: ${JSON.stringify(data)}`);
+  }
+
+  const imageBase64 = extractImageBase64(data);
+  if (!imageBase64) {
+    throw new Error("OpenAI image API did not return b64_json");
+  }
+
+  return Buffer.from(imageBase64, "base64");
+}
+
+async function editOpenAIImage(prompt, inputImage, options = {}) {
   const form = new FormData();
 
-  form.append("model", OPENAI_IMAGE_MODEL);
-  form.append("prompt", prompt);
-  form.append("size", OPENAI_IMAGE_SIZE);
-  form.append("quality", OPENAI_IMAGE_QUALITY);
-  form.append("output_format", OPENAI_IMAGE_OUTPUT_FORMAT);
+  const model = options.model || OPENAI_IMAGE_MODEL;
+  const size = options.size || OPENAI_IMAGE_SIZE;
+  const quality = options.quality || OPENAI_IMAGE_QUALITY;
+  const outputFormat = options.output_format || OPENAI_IMAGE_OUTPUT_FORMAT;
 
-  if (OPENAI_IMAGE_MODEL.startsWith("dall-e")) {
+  form.append("model", model);
+  form.append("prompt", prompt);
+  form.append("size", size);
+  form.append("quality", quality);
+  form.append("output_format", outputFormat);
+
+  if (model.startsWith("dall-e")) {
     form.append("response_format", "b64_json");
   }
 
@@ -1974,7 +2089,11 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  if (isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
+  // Берём текущие лимиты пользователя из БД (или памяти)
+  const currentCounts = await getUserRequestCounts(userId);
+
+  // Проверка дневного лимита по картинкам
+  if (await isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
     await sendMaxMessage(
       target,
       "🥱Вы достигли лимита на создание **Шедевров** сегодня, приходите позже и продолжайте"
@@ -1982,7 +2101,8 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  if (isSubscriptionRequiredForRequest(userId, "images")) {
+  // Проверка необходимости подписки
+  if (await isSubscriptionRequiredForRequest(userId, "images")) {
     await sendSubscriptionPrompt(
       target,
       userId,
@@ -1991,13 +2111,27 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  incrementRequestCount(userId, "images");
+  // Определяем, что это ПЕРВОЕ изображение пользователя (до инкремента)
+  const isFirstImageEver = (currentCounts.images || 0) === 0;
 
+  // Сначала инкрементируем счётчик в БД
+  await incrementRequestCount(userId, "images");
+
+  // Скачиваем входное изображение (если есть)
   const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
 
+  // Для первой картинки — другая модель/качество/размер
+  const imageOptions = isFirstImageEver
+    ? {
+        model: FIRST_IMAGE_MODEL,
+        size: FIRST_IMAGE_SIZE,
+        quality: FIRST_IMAGE_QUALITY
+      }
+    : {};
+
   const imageBuffer = inputImage
-    ? await editOpenAIImage(prompt, inputImage)
-    : await generateOpenAIImage(prompt);
+    ? await editOpenAIImage(prompt, inputImage, imageOptions)
+    : await generateOpenAIImage(prompt, imageOptions);
 
   await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
 }
@@ -2015,8 +2149,8 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  // Лимит на день (5 по сценарию — у тебя VIDEO_REQUEST_LIMIT)
-  if (isRequestLimitReached(userId, "videos", VIDEO_REQUEST_LIMIT)) {
+  // Лимит на день по видео
+  if (await isRequestLimitReached(userId, "videos", VIDEO_REQUEST_LIMIT)) {
     await sendMaxMessage(
       target,
       "🥱Вы достигли лимита на создание **видео** сегодня. Приходите позже и продолжайте."
@@ -2024,8 +2158,8 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  // Подписка после 1 бесплатного видео
-  if (isSubscriptionRequiredForRequest(userId, "videos")) {
+  // Подписка после бесплатных видео
+  if (await isSubscriptionRequiredForRequest(userId, "videos")) {
     await sendSubscriptionPrompt(
       target,
       userId,
@@ -2035,8 +2169,11 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
   }
 
   // Инкремент ДО генерации
-  incrementRequestCount(userId, "videos");
-  const isFirstVideoToday = (getUserRequestCounts(userId)?.videos === 1);
+  await incrementRequestCount(userId, "videos");
+
+  // Узнаём текущее значение (уже после инкремента)
+  const countsAfter = await getUserRequestCounts(userId);
+  const isFirstVideoToday = (countsAfter.videos || 0) === 1;
 
   const inputImage = await downloadIncomingImage(incomingImageUrl);
 
@@ -2071,6 +2208,7 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
     );
   }
 }
+
 async function handleUpdate(update) {
   const updateType = update?.update_type;
   const target = getReplyTarget(update);
@@ -2253,7 +2391,7 @@ async function handleUpdate(update) {
     }
 
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
-      status = await startDynamicStatus(target, "👽Шедевр создается");
+      status = await startDynamicStatus(target, "🦖Шедевр создается");
 
       await handleImageRequest(update, target, userText, incomingImageUrl, userId);
 
@@ -2262,7 +2400,7 @@ async function handleUpdate(update) {
       return;
     }
 
-    if (isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
+    if (await isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
       await sendMaxMessage(
         target,
         "Кажется вам надо немного отдохнуть от ИИ🏝️, **приходите чуть позже и продолжайте**🦦"
@@ -2270,7 +2408,7 @@ async function handleUpdate(update) {
       return;
     }
 
-    if (isSubscriptionRequiredForRequest(userId, "chatgpt")) {
+    if (await isSubscriptionRequiredForRequest(userId, "chatgpt")) {
       await sendSubscriptionPrompt(
         target,
         userId,
@@ -2279,7 +2417,7 @@ async function handleUpdate(update) {
       return;
     }
 
-    incrementRequestCount(userId, "chatgpt");
+    await incrementRequestCount(userId, "chatgpt");
 
     status = await startDynamicStatus(target, "💬ИИ думает");
 
@@ -2344,12 +2482,18 @@ app.post("/webhook", (req, res) => {
 
 resetDailyLimits();
 
-initBroadcastUsersDb()
+
+Promise.all([
+  initBroadcastUsersDb(),
+  initLimitsDb()
+])
   .catch((error) => {
-    console.warn("Broadcast DB init failed:", error?.message || error);
+    console.warn("DB init failed:", error?.message || error);
   })
   .finally(() => {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`MAX OpenAI bot is running on port ${PORT}`);
+    });
+  });
     });
   });
