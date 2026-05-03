@@ -2386,12 +2386,18 @@ async function handleUpdate(update) {
 
       // 1) Проверка подписки по кнопке "Я подписан(а)"
       if (isSubscriptionCheckPayload(callbackPayload)) {
-        const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
+        // userId из payload нам нужен только чтобы понять, что это вообще кнопка проверки
+        const payloadUserId = getUserIdFromSubscriptionPayload(callbackPayload);
 
-        if (!userIdFromPayload) {
+        // А ДЛЯ ПРОВЕРКИ подписки используем ТОЛЬКО реальный ID из callback.user
+        const callbackUserId = String(update?.callback?.user?.user_id || "").trim();
+
+        if (!callbackUserId) {
           console.warn(
-            "Subscription callback has no userId in payload. Payload:",
-            callbackPayload
+            "Subscription callback has no callback.user.user_id. PayloadUserId:",
+            payloadUserId,
+            "stableUserId:",
+            userId
           );
 
           if (callbackId) {
@@ -2409,10 +2415,18 @@ async function handleUpdate(update) {
           return;
         }
 
-        await handleSubscriptionCheck(target, userIdFromPayload, callbackId);
+        console.log(
+          "Subscription check will use user_id (from callback.user):",
+          callbackUserId,
+          "payloadUserId:",
+          payloadUserId,
+          "stableUserId:",
+          userId
+        );
+
+        await handleSubscriptionCheck(target, callbackUserId, callbackId);
         return;
       }
-
 
             // 2) Меню: Создать фото
       if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
