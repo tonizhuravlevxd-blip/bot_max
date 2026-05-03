@@ -2421,12 +2421,13 @@ async function handleUpdate(update) {
       if (isSubscriptionCheckPayload(callbackPayload)) {
         const payloadUserId = getUserIdFromSubscriptionPayload(callbackPayload);
 
-        // Пытаемся взять НАСТОЯЩИЙ user_id из callback.user,
-        // а не старый id, зашитый в payload.
-        const realUserId =
-          String(update?.callback?.user?.user_id || "").trim() ||
-          String(userId || "").trim() ||
-          payloadUserId;
+        // Берём реальный user_id из callback.user, либо стабильный userId.
+        // ID из payload используем ТОЛЬКО для логов/отладки, но НЕ для проверки.
+        const realUserId = String(
+          update?.callback?.user?.user_id ||
+          userId ||
+          ""
+        ).trim();
 
         if (!realUserId) {
           console.warn(
@@ -2449,7 +2450,12 @@ async function handleUpdate(update) {
           return;
         }
 
-        console.log("Subscription check will use user_id:", realUserId, "payloadUserId:", payloadUserId);
+        console.log(
+          "Subscription check will use user_id:",
+          realUserId,
+          "payloadUserId:",
+          payloadUserId
+        );
 
         await handleSubscriptionCheck(target, realUserId, callbackId);
         return;
