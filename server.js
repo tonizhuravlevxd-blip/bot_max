@@ -2116,9 +2116,11 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
       }
     : {};
 
-  const imageBuffer = inputImage
-    ? await editOpenAIImage(prompt, inputImage, imageOptions)
-    : await generateOpenAIImage(prompt, imageOptions);
+  const imageBuffer = await runImageOpenAI(() =>
+    inputImage
+      ? editOpenAIImage(prompt, inputImage, imageOptions)
+      : generateOpenAIImage(prompt, imageOptions)
+  );
 
   await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
 }
