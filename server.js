@@ -2419,11 +2419,18 @@ async function handleUpdate(update) {
 
       // 1) Проверка подписки
       if (isSubscriptionCheckPayload(callbackPayload)) {
-        const userIdFromPayload = getUserIdFromSubscriptionPayload(callbackPayload);
+        const payloadUserId = getUserIdFromSubscriptionPayload(callbackPayload);
 
-        if (!userIdFromPayload) {
+        // Пытаемся взять НАСТОЯЩИЙ user_id из callback.user,
+        // а не старый id, зашитый в payload.
+        const realUserId =
+          String(update?.callback?.user?.user_id || "").trim() ||
+          String(userId || "").trim() ||
+          payloadUserId;
+
+        if (!realUserId) {
           console.warn(
-            "Subscription callback has no userId in payload. Payload:",
+            "Subscription callback has no valid userId. Payload:",
             callbackPayload
           );
 
@@ -2442,7 +2449,9 @@ async function handleUpdate(update) {
           return;
         }
 
-        await handleSubscriptionCheck(target, userIdFromPayload, callbackId);
+        console.log("Subscription check will use user_id:", realUserId, "payloadUserId:", payloadUserId);
+
+        await handleSubscriptionCheck(target, realUserId, callbackId);
         return;
       }
 
