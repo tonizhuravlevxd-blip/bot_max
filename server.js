@@ -2409,7 +2409,7 @@ async function handleUpdate(update) {
     const isCallbackUpdate =
       updateType === "message_callback" ||
       Boolean(callbackId) ||
-      Boolean(callbackPayload);
+      Boolean(update?.callback);
 
     // Отдельная обработка callback-кнопок
     if (isCallbackUpdate) {
