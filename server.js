@@ -79,9 +79,13 @@ const userBusyUntil = new Map();
 const userBusyWarningAt = new Map();
 
 function getStableUserId(update, target) {
+  // Для callback всегда главный источник — пользователь, который нажал кнопку
+  if (update?.callback?.user?.user_id) {
+    return update.callback.user.user_id;
+  }
+
   return (
     update?.message?.sender?.user_id ||
-    update?.callback?.user?.user_id ||
     update?.user?.user_id ||
     update?.user_id ||
     target?.id ||
@@ -1249,6 +1253,10 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
 function extractMembersFromMaxResponse(body) {
   if (!body) return [];
 
+  if (Array.isArray(body)) {
+    return body;
+  }
+
   const candidates = [
     body.members,
     body.items,
@@ -1256,46 +1264,68 @@ function extractMembersFromMaxResponse(body) {
     body.subscribers,
     body.chat_members,
     body.chatMembers,
+    body.memberships,
+
     body.data,
+    body.result,
+
     body.result?.members,
     body.result?.items,
     body.result?.users,
     body.result?.subscribers,
+    body.result?.chat_members,
+    body.result?.chatMembers,
+    body.result?.memberships,
+
     body.payload?.members,
     body.payload?.items,
     body.payload?.users,
     body.payload?.subscribers,
+    body.payload?.memberships,
+
     body.response?.members,
     body.response?.items,
     body.response?.users,
-    body.response?.subscribers
+    body.response?.subscribers,
+    body.response?.memberships
   ];
 
   for (const candidate of candidates) {
     if (!candidate) continue;
 
-    // Если это уже массив — возвращаем его
     if (Array.isArray(candidate)) {
       return candidate;
     }
 
-    // Если это объект (map user_id -> member) — берём его значения
     if (typeof candidate === "object") {
+      // Если это одиночный участник
+      if (getMemberUserId(candidate)) {
+        return [candidate];
+      }
+
       const values = Object.values(candidate);
-      if (values.length) return values;
+
+      if (values.some((v) => getMemberUserId(v))) {
+        return values;
+      }
+
+      const firstArray = values.find(Array.isArray);
+      if (firstArray) return firstArray;
     }
   }
 
-  // Если сам body — массив
-  if (Array.isArray(body)) {
-    return body;
-  }
-
-  // Если в корне объект, пробуем найти в нём первый массив
   if (typeof body === "object") {
+    if (getMemberUserId(body)) {
+      return [body];
+    }
+
     for (const value of Object.values(body)) {
       if (Array.isArray(value)) {
         return value;
+      }
+
+      if (value && typeof value === "object" && getMemberUserId(value)) {
+        return [value];
       }
     }
   }
@@ -1375,10 +1405,17 @@ function isMemberActive(member) {
 
 function responseContainsActiveUser(body, userId) {
   const expectedUserId = String(userId);
+
+  // Если API вернул сразу одного участника
+  const rootUserId = String(getMemberUserId(body) || "");
+  if (rootUserId === expectedUserId && isMemberActive(body)) {
+    return true;
+  }
+
   const members = extractMembersFromMaxResponse(body);
 
   for (const member of members) {
-    const memberUserId = String(getMemberUserId(member));
+    const memberUserId = String(getMemberUserId(member) || "");
 
     if (memberUserId === expectedUserId && isMemberActive(member)) {
       return true;
@@ -1410,17 +1447,81 @@ async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
   }
 
   const channelId = encodeURIComponent(requiredChannel.id);
-  const expectedUserId = String(userId);
+  const expectedUserId = String(userId).trim();
+
+  const path = `/chats/${channelId}/members`;
 
   try {
+    // 1. Сначала пробуем проверить конкретного пользователя.
+    // Если MAX поддерживает фильтр user_ids/user_id — это самый правильный вариант.
+    const directQueries = [
+      { user_ids: expectedUserId },
+      { user_id: expectedUserId },
+      { count: 100, user_ids: expectedUserId },
+      { count: 100, user_id: expectedUserId }
+    ];
+
+    for (const query of directQueries) {
+      try {
+        console.log(
+          "Outgoing DIRECT subscription check:",
+          JSON.stringify({
+            method: "GET",
+            path,
+            query,
+            expectedUserId,
+            requiredChannelId: requiredChannel.id
+          })
+        );
+
+        const directResult = await maxRequest(path, {
+          method: "GET",
+          query
+        });
+
+        const members = extractMembersFromMaxResponse(directResult);
+
+        console.log(
+          "DIRECT subscription check response:",
+          JSON.stringify({
+            channelId: requiredChannel.id,
+            expectedUserId,
+            membersCount: members.length,
+            sampleIds: members.slice(0, 10).map((m) => String(getMemberUserId(m) || ""))
+          })
+        );
+
+        if (responseContainsActiveUser(directResult, expectedUserId)) {
+          console.log(
+            `Subscription check result for user ${expectedUserId}, channel ${requiredChannel.id}: true by direct query`
+          );
+          return true;
+        }
+      } catch (directError) {
+        console.warn(
+          `Direct subscription query failed for user ${expectedUserId}, channel ${requiredChannel.id}:`,
+          directError?.message || directError
+        );
+      }
+    }
+
+    // 2. Fallback: листаем участников.
+    // ВАЖНО: 20 страниц мало. Увеличиваем.
     let marker = "";
     let page = 0;
-    const maxPages = 20;
+
+    const maxPages = Number(process.env.SUBSCRIPTION_MAX_PAGES || 500);
+    const pageSize = Number(process.env.SUBSCRIPTION_PAGE_SIZE || 100);
+
+    const seenMarkers = new Set();
 
     while (page < maxPages) {
       page += 1;
 
-      const query = {};
+      const query = {
+        count: pageSize
+      };
+
       if (marker) {
         query.marker = marker;
       }
@@ -1429,46 +1530,66 @@ async function checkSingleRequiredChannelSubscription(userId, requiredChannel) {
         "Outgoing subscription check:",
         JSON.stringify({
           method: "GET",
-          path: `/chats/${channelId}/members`,
+          path,
           query,
           expectedUserId,
-          requiredChannelId: requiredChannel.id
+          requiredChannelId: requiredChannel.id,
+          page
         })
       );
 
-      const result = await maxRequest(`/chats/${channelId}/members`, {
+      const result = await maxRequest(path, {
         method: "GET",
         query
       });
 
+      const members = extractMembersFromMaxResponse(result);
+
       console.log(
-        `Subscription check response page ${page} for user ${userId}, channel ${requiredChannel.id}`
+        "Subscription check page response:",
+        JSON.stringify({
+          page,
+          channelId: requiredChannel.id,
+          expectedUserId,
+          membersCount: members.length,
+          sampleIds: members.slice(0, 10).map((m) => String(getMemberUserId(m) || ""))
+        })
       );
 
       if (responseContainsActiveUser(result, expectedUserId)) {
         console.log(
-          `Subscription check result for user ${userId}, channel ${requiredChannel.id}: true`
+          `Subscription check result for user ${expectedUserId}, channel ${requiredChannel.id}: true`
         );
         return true;
       }
 
       const nextMarker = getNextMembersMarker(result);
-      if (!nextMarker || nextMarker === marker) {
+
+      if (!nextMarker) {
         break;
       }
 
+      if (nextMarker === marker || seenMarkers.has(nextMarker)) {
+        console.warn(
+          `Subscription pagination loop detected for channel ${requiredChannel.id}, marker=${nextMarker}`
+        );
+        break;
+      }
+
+      seenMarkers.add(nextMarker);
       marker = nextMarker;
     }
 
     console.log(
-      `Subscription check result for user ${userId}, channel ${requiredChannel.id}: false`
+      `Subscription check result for user ${expectedUserId}, channel ${requiredChannel.id}: false after ${page} pages`
     );
+
     return false;
   } catch (error) {
     const message = String(error?.message || error);
 
     console.warn(
-      `Subscription check failed for user ${userId}, channel ${requiredChannel.id}:`,
+      `Subscription check failed for user ${expectedUserId}, channel ${requiredChannel.id}:`,
       message
     );
 
