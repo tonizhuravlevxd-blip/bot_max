@@ -1694,19 +1694,6 @@ async function generateOpenAIImage(prompt, options = {}) {
   return Buffer.from(imageBase64, "base64");
 }
 
-  const data = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    throw new Error(`OpenAI image API ${response.status}: ${JSON.stringify(data)}`);
-  }
-
-  const imageBase64 = extractImageBase64(data);
-  if (!imageBase64) {
-    throw new Error("OpenAI image API did not return b64_json");
-  }
-
-  return Buffer.from(imageBase64, "base64");
-}
 
 async function editOpenAIImage(prompt, inputImage, options = {}) {
   const form = new FormData();
@@ -2495,5 +2482,4 @@ Promise.all([
       console.log(`MAX OpenAI bot is running on port ${PORT}`);
     });
   });
-    });
-  });
+  
