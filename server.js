@@ -20,11 +20,11 @@ const WORKER_MAKE_VIDEO_URL = process.env.WORKER_MAKE_VIDEO_URL || "";
 
 // После этих значений нужна подписка
 const IMAGE_REQUESTS_BEFORE_SUBSCRIPTION = Number(
-  process.env.IMAGE_REQUESTS_BEFORE_SUBSCRIPTION || 2
+  process.env.IMAGE_REQUESTS_BEFORE_SUBSCRIPTION || 1
 );
 
 const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
-  process.env.CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION || 3
+  process.env.CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION || 2
 );
 
 // Каналы MAX, на которые нужна обязательная подписка
