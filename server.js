@@ -9,7 +9,7 @@ const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
-const IMAGE_REQUEST_LIMIT = 5; 
+const IMAGE_REQUEST_LIMIT = 4; 
 const CHATGPT_REQUEST_LIMIT = 9;
 const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
 const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
@@ -52,7 +52,26 @@ const SUBSCRIPTION_CHECK_PAYLOAD = "check_subscription";
 // Пейлоады для основного меню
 const MENU_CREATE_PHOTO_PAYLOAD = "menu_create_photo";
 const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
+const MENU_RESTORE_PHOTO_PAYLOAD = "menu_restore_photo";
 const MENU_BACK_PAYLOAD = "menu_back";
+
+const IMAGE_MODE_RESTORATION = "restoration";
+
+const RESTORATION_PROMPT = `Реставрируй старую фотографию максимально аккуратно и реалистично.
+
+Главная задача: улучшить качество изображения, сохранив оригинал без изменений личности людей, черт лица, пропорций, возраста, формы глаз, носа, губ, мимики, причёски, одежды, поз, композиции и фона.
+
+Сохрани все лица 1:1. Не изменяй выражения лиц, не омолаживай, не делай людей красивее, не добавляй новые черты, не меняй форму головы, глаз, носа, рта, ушей и подбородка.
+
+Сохрани все надписи, буквы, цифры, документы, вывески и текст на фото без искажений. Не переписывай текст заново, не заменяй буквы, не добавляй новые символы, не исправляй надписи творчески. Если текст плохо читается, оставь его максимально близким к оригиналу.
+
+Убери пыль, царапины, пятна, заломы, трещины, шум, следы старения бумаги и мелкие повреждения. Восстанови потерянные участки только там, где это очевидно по соседним деталям. Не придумывай новые объекты.
+
+Улучши резкость, контраст, детализацию и тональный баланс мягко, без чрезмерной обработки. Сохрани естественную текстуру старой фотографии, зерно плёнки и исторический характер снимка. Не делай фото пластиковым, глянцевым или похожим на современную AI-фотографию.
+
+Если фотография чёрно-белая — оставь её чёрно-белой, если не указано иное. Если фотография цветная — восстанови естественные приглушённые цвета без перенасыщения.
+
+Финальный результат: реалистичная реставрация архивного фото, чистое изображение, сохранённые лица и надписи, без изменения оригинальной сцены.`;
 
 // Пользователи, которые уже прошли проверку подписки
 const subscriptionVerifiedUsers = new Set();
@@ -62,6 +81,23 @@ const subscriptionVerifiedUsers = new Set();
 const userSubscriptionMessages = new Map();
 
 const userRequestCounts = {};
+const userImageModes = new Map();
+
+function setUserImageMode(userId, mode) {
+  userImageModes.set(String(userId || "unknown"), mode);
+}
+
+function getUserImageMode(userId) {
+  return userImageModes.get(String(userId || "unknown")) || "";
+}
+
+function clearUserImageMode(userId) {
+  userImageModes.delete(String(userId || "unknown"));
+}
+
+function isRestorationMode(userId) {
+  return getUserImageMode(userId) === IMAGE_MODE_RESTORATION;
+}
 
 const FLOOD_WINDOW_MS = Number(process.env.FLOOD_WINDOW_MS || 10_000);
 const FLOOD_MAX_MESSAGES = Number(process.env.FLOOD_MAX_MESSAGES || 5);
@@ -1109,6 +1145,13 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
+        text: "🛠️ Реставрация",
+        payload: MENU_RESTORE_PHOTO_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
         text: "🎬 Оживить фото (демо)",
         payload: MENU_CREATE_VIDEO_PAYLOAD
       }
@@ -1119,7 +1162,7 @@ function buildMainMenuButtons() {
 async function sendMainMenu(target, prefixText = "") {
   const text =
     prefixText ||
-    "Выбери, что хочешь сделать или пиши прямо в чат✏️:\n\n🖼️ Создать фото\n🎬 Оживить фото (демо)";
+    "Выбери, что хочешь сделать или пиши прямо в чат✏️:\n\n🖼️ Создать фото\n🛠️ Реставрация\n🎬 Оживить фото (демо)";
 
   const attachments = [
     {
@@ -1152,6 +1195,25 @@ async function sendCreatePhotoHelp(target) {
     "• фото + промт (что изменить/добавить)\n" +
     "или\n" +
     "• просто промт с текстом вида: `создай фото/картинку ...`";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildBackButtonKeyboard()
+      }
+    }
+  ];
+
+  return sendMaxMessageWithAttachments(target, text, attachments);
+}
+
+async function sendRestorationPhotoHelp(target) {
+  const text =
+    "🛠️ *Реставрация фото*\n\n" +
+    "Режим реставрации включён✅\n\n" +
+    "*Теперь просто отправьте старую фотографию.* Можно отправить фото без текста или фото с любым текстом — текст будет проигнорирован.\n\n" +
+    "Бот использует только встроенный промт аккуратной реалистичной реставрации.";
 
   const attachments = [
     {
@@ -2317,7 +2379,7 @@ function safeUserError(error) {
   return "Произошла ошибка при обработке запроса.";
 }
 
-async function handleImageRequest(update, target, userText, incomingImageUrl, userId = target.id) {
+async function handleImageRequest(update, target, userText, incomingImageUrl, userId = target.id, captionOverride = "") {
   const prompt = String(userText || "").trim();
 
   if (!prompt) {
@@ -2374,7 +2436,11 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
       : generateOpenAIImage(prompt, imageOptions)
   );
 
-  await sendMaxImage(target, makeImageCaption(prompt, Boolean(inputImage)), imageBuffer);
+  await sendMaxImage(
+  target,
+  captionOverride || makeImageCaption(prompt, Boolean(inputImage)),
+  imageBuffer
+);
 }
 
 async function handleVideoRequest(update, target, userText, incomingImageUrl, userId = target.id) {
@@ -2549,26 +2615,40 @@ async function handleUpdate(update) {
         return;
       }
 
-            // 2) Меню: Создать фото
+      // 2) Меню: Создать фото
       if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
+        clearUserImageMode(userId);
+
         // Для меню уведомление не нужно — просто присылаем подсказку
         await sendCreatePhotoHelp(target);
         return;
       }
 
-      // 3) Меню: Оживить фото (демо)
+      // 3) Меню: Реставрация
+      if (callbackPayload === MENU_RESTORE_PHOTO_PAYLOAD) {
+        setUserImageMode(userId, IMAGE_MODE_RESTORATION);
+
+        await sendRestorationPhotoHelp(target);
+        return;
+      }
+
+      // 4) Меню: Оживить фото (демо)
       if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
+        clearUserImageMode(userId);
+
         await sendCreateVideoHelp(target);
         return;
       }
 
-      // 4) Кнопка "Назад" — возвращаем к двум кнопкам
+      // 5) Кнопка "Назад" — возвращаем к меню
       if (callbackPayload === MENU_BACK_PAYLOAD) {
+        clearUserImageMode(userId);
+
         await sendMainMenu(target);
         return;
       }
 
-      // 5) Неизвестная кнопка
+      // 6) Неизвестная кнопка
       if (callbackId) {
         await answerMaxCallback(callbackId, "Неизвестная кнопка.");
       }
@@ -2583,7 +2663,6 @@ async function handleUpdate(update) {
       await handleBroadcastCommand(target, userId, userText);
       return;
     }
-
     // Текстовая команда проверки подписки
     if (
       userText.toLowerCase() === "/check_sub" ||
@@ -2614,6 +2693,7 @@ async function handleUpdate(update) {
 
     if (["/reset", "/new", "/clear", "/сброс"].includes(userText.toLowerCase())) {
       clearChatContext(userId);
+      clearUserImageMode(userId);
 
       await sendMaxMessage(
         target,
@@ -2628,6 +2708,40 @@ async function handleUpdate(update) {
         target,
         "**Это уже не смешно🥺. Стоп спам, пожалуйста😢**."
       );
+      return;
+    }
+
+    if (isRestorationMode(userId)) {
+      if (!incomingImageUrl) {
+        await sendMaxMessage(
+          target,
+          "🛠️ Режим реставрации включён. Отправьте старую фотографию — любой текст будет проигнорирован."
+        );
+        return;
+      }
+
+      if (isUserBusy(userId)) {
+        await sendBusyWarningIfNeeded(target, userId, firstName);
+        return;
+      }
+
+      lockUserProcessing(userId);
+      processingLocked = true;
+
+      status = await startDynamicStatus(target, "🛠️Фото реставрируется");
+
+      await handleImageRequest(
+        update,
+        target,
+        RESTORATION_PROMPT,
+        incomingImageUrl,
+        userId,
+        "✅ Готово. Фото аккуратно отреставрировано."
+      );
+
+      await status.stop();
+      status = null;
+
       return;
     }
 
