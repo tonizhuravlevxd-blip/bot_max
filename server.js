@@ -47,7 +47,7 @@ const REQUIRED_CHANNELS = [
   },
   {
     id: process.env.REQUIRED_CHANNEL_ID_4 || "-74285880911137",
-    url: process.env.REQUIRED_CHANNEL_URL_4 || "https://vk.com/away.php?to=https%3A%2F%2Fmax.ru%2Fjoin%2FWHDVfDYqIn_XDn5Zt345Oibq_LwVLLDGyYRzcCg9qYU&utf=1",
+    url: process.env.REQUIRED_CHANNEL_URL_4 || "https://max.ru/join/WHDVfDYqIn_XDn5Zt345Oibq_LwVLLDGyYRzcCg9qYU",
     title: "Канал 4"
   }
 ].filter((channel) => channel.id);
