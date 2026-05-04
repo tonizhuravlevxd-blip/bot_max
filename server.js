@@ -1162,7 +1162,7 @@ function buildMainMenuButtons() {
 async function sendMainMenu(target, prefixText = "") {
   const text =
     prefixText ||
-    "Выбери, что хочешь сделать или пиши прямо в чат✏️:\n\n🖼️ Создать фото\n🛠️ Реставрация\n🎬 Оживить фото (демо)";
+    "Выбери, что хочешь сделать, или пиши прямо в чат✏️.\n\n**🗣️ Совет:** *Попроси в чате написать тебе точный промт для модели Image GPT + опиши свой запрос, а потом создавай фото🔮*";
 
   const attachments = [
     {
