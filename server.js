@@ -28,6 +28,7 @@ const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
 );
 
 // Каналы MAX, на которые нужна обязательная подписка
+// Каналы MAX, на которые нужна обязательная подписка
 const REQUIRED_CHANNELS = [
   {
     id: process.env.REQUIRED_CHANNEL_ID || "-73970192098593",
@@ -43,6 +44,11 @@ const REQUIRED_CHANNELS = [
     id: process.env.REQUIRED_CHANNEL_ID_3 || "-74290803017086",
     url: process.env.REQUIRED_CHANNEL_URL_3 || "https://max.ru/id231711659887_biz",
     title: "Канал 3"
+  },
+  {
+    id: process.env.REQUIRED_CHANNEL_ID_4 || "-74285880911137",
+    url: process.env.REQUIRED_CHANNEL_URL_4 || "https://vk.com/away.php?to=https%3A%2F%2Fmax.ru%2Fjoin%2FWHDVfDYqIn_XDn5Zt345Oibq_LwVLLDGyYRzcCg9qYU&utf=1",
+    title: "Канал 4"
   }
 ].filter((channel) => channel.id);
 
