@@ -3918,24 +3918,6 @@ if (productCardModeActive) {
   return;
 }
 
-  lockUserProcessing(userId);
-  processingLocked = true;
-
-  status = await startDynamicStatus(target, "🛒 Карточки товара создаются");
-
-  await handleProductCardRequest(
-    update,
-    target,
-    userText,
-    incomingImageUrl,
-    userId
-  );
-
-  await status.stop();
-  status = null;
-
-  return;
-}
 
     if (!userText && incomingImageUrl) {
       await sendMaxMessage(
