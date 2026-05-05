@@ -193,6 +193,22 @@ function getUserFirstName(update) {
   return "";
 }
 
+function formatChatGptAnswerWithName(firstName, answer) {
+  const cleanAnswer = String(answer || "").trim();
+
+  const cleanName = String(firstName || "")
+    .replace(/[\r\n,]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 50);
+
+  if (!cleanName) {
+    return cleanAnswer;
+  }
+
+  return `${cleanName}, ${cleanAnswer}`;
+}
+
 function normalizeFloodText(text) {
   return String(text || "")
     .toLowerCase()
@@ -3328,7 +3344,7 @@ function safeUserError(error) {
   const message = String(error?.message || error || "Unknown error");
 
   if (/content_policy|safety|moderation/i.test(message)) {
-    return "Не получилось создать изображение: запрос не прошёл проверку безопасности.";
+    return "📲Не получилось создать изображение: запрос не прошёл проверку безопасности.Попробуйте изменить описание";
   }
 
   if (/OpenAI/i.test(message)) {
@@ -4020,14 +4036,17 @@ if (productCardModeActive) {
 
     status = await startDynamicStatus(target, "💬ИИ думает");
 
-    const answer = await runTextOpenAI(() => askOpenAI(userId, userText));
+const answer = await runTextOpenAI(() => askOpenAI(userId, userText));
 
-    await status.stop();
-    status = null;
+await status.stop();
+status = null;
 
-    await sendMaxMessage(target, answer);
+await sendMaxMessage(
+  target,
+  formatChatGptAnswerWithName(firstName, answer)
+);
 
-    await maybeSendRandomNudgeAfterGeneration(target, userId);
+await maybeSendRandomNudgeAfterGeneration(target, userId);
   } catch (error) {
     console.error("Update handling failed:", error);
 
