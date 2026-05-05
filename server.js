@@ -1104,7 +1104,7 @@ const PRODUCT_CARD_IMAGE_SIZE =
   process.env.PRODUCT_CARD_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
 
 const PRODUCT_CARD_IMAGE_QUALITY =
-  process.env.PRODUCT_CARD_IMAGE_QUALITY || "medium";
+  process.env.PRODUCT_CARD_IMAGE_QUALITY || "low";
 
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
@@ -3875,7 +3875,9 @@ async function handleUpdate(update) {
       return;
     }
 
-    if (isProductCardMode(userId)) {
+const productCardCreditsForAutoMode = await getProductCardCredits(userId);
+
+if (isProductCardMode(userId) || productCardCreditsForAutoMode > 0) {
   if (!userText) {
     await sendMaxMessage(
       target,
@@ -4113,78 +4115,83 @@ async function handleYooKassaWebhook(req, res) {
       }
 
       // Проверяем платеж повторно через YooKassa, чтобы не доверять только webhook.
-const payment = await getYooKassaPayment(paymentId);
-const metadata = payment?.metadata || {};
-const product = String(metadata.product || "").trim();
+      const payment = await getYooKassaPayment(paymentId);
+      const metadata = payment?.metadata || {};
+      const product = String(metadata.product || "").trim();
 
-if (product === "premium_month") {
-  const result = await applyPremiumPayment(payment);
+      if (product === "premium_month") {
+        const result = await applyPremiumPayment(payment);
 
-  console.log("Premium payment apply result:", result);
+        console.log("Premium payment apply result:", result);
 
-  if (result.granted && result.userId) {
-    await sendMaxMessage(
-      {
-        type: "user_id",
-        id: result.userId
-      },
-      [
-        "✅ **Премиум на месяц получен!**",
-        "",
-        "Теперь вам открыт доступ:",
-        "• 10 фото в день с лучшей моделью;",
-        "• 16 запросов ChatGPT в день;",
-        "• без обязательной подписки на каналы.",
-        "",
-        "Спасибо, вы стали Спонсором Бота и членом нашей семьи 🙌🏻"
-      ].join("\n")
-    ).catch((error) => {
-      console.warn("Failed to send premium success message:", error?.message || error);
-    });
-  }
+        if (result.granted && result.userId) {
+          await sendMaxMessage(
+            {
+              type: "user_id",
+              id: result.userId
+            },
+            [
+              "✅ **Премиум на месяц получен!**",
+              "",
+              "Теперь вам открыт доступ:",
+              "• 10 фото в день с лучшей моделью;",
+              "• 16 запросов ChatGPT в день;",
+              "• без обязательной подписки на каналы.",
+              "",
+              "Спасибо, вы стали Спонсором Бота и членом нашей семьи 🙌🏻"
+            ].join("\n")
+          ).catch((error) => {
+            console.warn("Failed to send premium success message:", error?.message || error);
+          });
+        }
 
-  return;
+        return;
+      }
+
+      if (product === PRODUCT_CARD_PRODUCT_CODE) {
+        const result = await applyProductCardPayment(payment);
+
+        console.log("Product card payment apply result:", result);
+
+        if (result.granted && result.userId) {
+          setUserImageMode(result.userId, IMAGE_MODE_PRODUCT_CARD);
+
+          await sendMaxMessage(
+            {
+              type: "user_id",
+              id: result.userId
+            },
+            [
+              "✅ **Оплата прошла. Доступ к карточке товара открыт.**",
+              "",
+              "Теперь отправьте:",
+              "• **фото товара + промт** — лучший вариант;",
+              "или",
+              "• **просто промт товара**.",
+              "",
+              "Я создам **3 красивые карточки товара с разных ракурсов**.",
+              "",
+              "Пример:",
+              "`Крем для лица Nuvelora, премиальная бело-золотая карточка для маркетплейса, чистый фон, четкая надпись Nuvelora`"
+            ].join("\n")
+          ).catch((error) => {
+            console.warn("Failed to send product card success message:", error?.message || error);
+          });
+        }
+
+        return;
+      }
+
+      console.warn("Unknown YooKassa product:", {
+        paymentId,
+        product,
+        metadata
+      });
+    } catch (error) {
+      console.error("YooKassa webhook processing failed:", error);
+    }
+  })();
 }
-
-if (product === PRODUCT_CARD_PRODUCT_CODE) {
-  const result = await applyProductCardPayment(payment);
-
-  console.log("Product card payment apply result:", result);
-
-  if (result.granted && result.userId) {
-    setUserImageMode(result.userId, IMAGE_MODE_PRODUCT_CARD);
-
-    await sendMaxMessage(
-      {
-        type: "user_id",
-        id: result.userId
-      },
-      [
-        "✅ **Оплата прошла. Доступ к карточке товара открыт.**",
-        "",
-        "Теперь отправьте:",
-        "• **фото товара + промт** — лучший вариант;",
-        "или",
-        "• **просто промт товара**.",
-        "",
-        "Я создам **3 красивые карточки товара с разных ракурсов**.",
-        "",
-        "Пример:",
-        "`Крем для лица Nuvelora, премиальная бело-золотая карточка для маркетплейса, чистый фон, четкая надпись Nuvelora`"
-      ].join("\n")
-    ).catch((error) => {
-      console.warn("Failed to send product card success message:", error?.message || error);
-    });
-  }
-
-  return;
-}
-
-console.warn("Unknown YooKassa product:", {
-  paymentId,
-  product,
-  metadata
-});
       
 app.post("/yookassa-webhook", handleYooKassaWebhook);
 app.post("/yookassa/webhook", handleYooKassaWebhook);
