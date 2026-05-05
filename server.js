@@ -1375,15 +1375,20 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   // userId кладём в payload, чтобы по нему потом проверять
   const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
 
-  const subscribeButtons = REQUIRED_CHANNELS
-    .filter((channel) => channel.url)
-    .map((channel, index) => [
-      {
-        type: "link",
-        text: `📢 Подписаться на ${channel.title || `канал ${index + 1}`}`,
-        url: channel.url
-      }
-    ]);
+  // Генерация кнопок с индикаторами подписки для каждого канала
+  const subscribeButtons = await Promise.all(
+    REQUIRED_CHANNELS.map(async (channel, index) => {
+      const isSubscribed = await checkSingleRequiredChannelSubscription(userId, channel);
+
+      return [
+        {
+          type: "link",
+          text: `${isSubscribed ? "✅" : "❌"} Подписаться на ${channel.title || `канал ${index + 1}`}`,
+          url: channel.url
+        }
+      ];
+    })
+  );
 
   const buttons = [
     ...subscribeButtons,
@@ -1409,7 +1414,7 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     await sendMaxMessageWithAttachments(target, text, attachments);
   } catch (error) {
     console.warn(
-      "Failed to send subscription buttons, fallback to text:",
+      "Не удалось отправить кнопки подписки, отправляем текст:",
       error?.message || error
     );
 
