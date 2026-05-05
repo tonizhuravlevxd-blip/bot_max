@@ -1,6 +1,6 @@
 import express from "express";
 import pg from "pg";
-import crypto from "crypto";
+
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -15,19 +15,6 @@ const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
 const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
   process.env.VIDEO_REQUESTS_BEFORE_SUBSCRIPTION || 1
 );
-
-const PREMIUM_IMAGE_REQUEST_LIMIT = Number(process.env.PREMIUM_IMAGE_REQUEST_LIMIT || 10);
-const PREMIUM_CHATGPT_REQUEST_LIMIT = Number(process.env.PREMIUM_CHATGPT_REQUEST_LIMIT || 16);
-const PREMIUM_DURATION_DAYS = Number(process.env.PREMIUM_DURATION_DAYS || 30);
-const PREMIUM_PRICE_RUB = process.env.PREMIUM_PRICE_RUB || "199.00";
-
-const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || "";
-const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || "";
-const YOOKASSA_API_BASE = process.env.YOOKASSA_API_BASE || "https://api.yookassa.ru/v3";
-
-const APP_PUBLIC_URL = String(
-  process.env.APP_PUBLIC_URL || process.env.PUBLIC_URL || ""
-).replace(/\/+$/, "");
 
 const WORKER_MAKE_VIDEO_URL = process.env.WORKER_MAKE_VIDEO_URL || "";
 
@@ -72,7 +59,6 @@ const SUBSCRIPTION_CHECK_PAYLOAD = "check_subscription";
 const MENU_CREATE_PHOTO_PAYLOAD = "menu_create_photo";
 const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
 const MENU_RESTORE_PHOTO_PAYLOAD = "menu_restore_photo";
-const MENU_PREMIUM_PAYLOAD = "menu_premium";
 const MENU_BACK_PAYLOAD = "menu_back";
 
 const IMAGE_MODE_RESTORATION = "restoration";
@@ -280,43 +266,6 @@ async function initLimitsDb() {
   `);
 
   console.log("Limits DB initialized");
-}
-
-async function initPremiumDb() {
-  if (!dbPool) return;
-
-  await dbPool.query(`
-    CREATE TABLE IF NOT EXISTS max_bot_premium_users (
-      user_id TEXT NOT NULL,
-      bot_key TEXT NOT NULL,
-      premium_until TIMESTAMPTZ NOT NULL,
-      last_payment_id TEXT,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      PRIMARY KEY (user_id, bot_key)
-    )
-  `);
-
-  await dbPool.query(`
-    CREATE TABLE IF NOT EXISTS max_bot_premium_payments (
-      payment_id TEXT PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      bot_key TEXT NOT NULL,
-      status TEXT NOT NULL DEFAULT 'pending',
-      amount TEXT NOT NULL DEFAULT '199.00',
-      currency TEXT NOT NULL DEFAULT 'RUB',
-      raw JSONB,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    )
-  `);
-
-  await dbPool.query(`
-    CREATE INDEX IF NOT EXISTS idx_max_bot_premium_users_active
-    ON max_bot_premium_users (user_id, bot_key, premium_until)
-  `);
-
-  console.log("Premium DB initialized");
 }
 
 async function getBroadcastRecipientsFromDb() {
@@ -655,8 +604,6 @@ const RANDOM_NUDGE_MESSAGES = [
 
   "🤖 Спасибо, что создаёшь вместе с ботом. Ты теперь нам как **семья**👨‍👨‍👦‍👦",
 
-  "🗣️ **Твои лимиты обновляются каждый день,всегда тебя ждем**",
-
   "❗ *Если есть проблемы с ботом или хотите стать **спонсором/реклама**, пишите в* **[Поддержку](https://max.ru/u/f9LHodD0cOK-A0lZdI24jE547UNSp4Gdn57gyHn8TJVc5hh-0NCZiBCjktg)**."
 ].filter(Boolean);
 
@@ -900,41 +847,6 @@ async function incrementRequestCount(userId, type) {
   );
 }
 
-async function getUserPremiumUntil(userId) {
-  if (!dbPool) return null;
-
-  const key = getUserRequestKey(userId);
-
-  const result = await dbPool.query(
-    `
-      SELECT premium_until
-      FROM max_bot_premium_users
-      WHERE user_id = $1
-        AND bot_key = $2
-        AND premium_until > NOW()
-      LIMIT 1
-    `,
-    [key, BOT_KEY]
-  );
-
-  return result.rows[0]?.premium_until || null;
-}
-
-async function isPremiumUser(userId) {
-  return Boolean(await getUserPremiumUntil(userId));
-}
-
-async function getUserDailyLimits(userId) {
-  const premium = await isPremiumUser(userId);
-
-  return {
-    premium,
-    images: premium ? PREMIUM_IMAGE_REQUEST_LIMIT : IMAGE_REQUEST_LIMIT,
-    chatgpt: premium ? PREMIUM_CHATGPT_REQUEST_LIMIT : CHATGPT_REQUEST_LIMIT,
-    videos: VIDEO_REQUEST_LIMIT
-  };
-}
-
 // Проверяем, достигнут ли лимит по типу
 async function isRequestLimitReached(userId, type, limit) {
   const counts = await getUserRequestCounts(userId);
@@ -951,7 +863,6 @@ function markSubscriptionVerified(userId) {
 
 // Проверяем, нужна ли подписка для текущего запроса
 async function isSubscriptionRequiredForRequest(userId, type) {
-  if (await isPremiumUser(userId)) return false;
   if (isSubscriptionVerified(userId)) return false;
 
   const counts = await getUserRequestCounts(userId);
@@ -992,10 +903,6 @@ const OPENAI_IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "pn
 const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || "gpt-image-1.5"; // сюда можно поставить нужную модель
 const FIRST_IMAGE_SIZE = process.env.FIRST_IMAGE_SIZE || "1024x1024";
 const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || "low";
-
-const PREMIUM_IMAGE_MODEL = process.env.PREMIUM_IMAGE_MODEL || OPENAI_IMAGE_MODEL;
-const PREMIUM_IMAGE_SIZE = process.env.PREMIUM_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
-const PREMIUM_IMAGE_QUALITY = process.env.PREMIUM_IMAGE_QUALITY || "low";
 
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
@@ -1273,243 +1180,6 @@ async function maxRequest(path, options = {}) {
   return body;
 }
 
-async function yookassaRequest(path, options = {}) {
-  if (!YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY) {
-    throw new Error("YOOKASSA_SHOP_ID or YOOKASSA_SECRET_KEY is not set");
-  }
-
-  const url = `${YOOKASSA_API_BASE}${path}`;
-
-  const headers = {
-    Authorization: `Basic ${Buffer.from(`${YOOKASSA_SHOP_ID}:${YOOKASSA_SECRET_KEY}`).toString("base64")}`
-  };
-
-  if (options.body !== undefined) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  if (options.idempotenceKey) {
-    headers["Idempotence-Key"] = options.idempotenceKey;
-  }
-
-  const response = await fetch(url, {
-    method: options.method || "GET",
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
-  });
-
-  const bodyText = await response.text();
-
-  let body;
-  try {
-    body = bodyText ? JSON.parse(bodyText) : null;
-  } catch {
-    body = bodyText;
-  }
-
-  if (!response.ok) {
-    const details = typeof body === "string" ? body : JSON.stringify(body);
-    throw new Error(`YooKassa API ${response.status}: ${details}`);
-  }
-
-  return body;
-}
-
-async function createYooKassaPremiumPayment(userId) {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for premium payments");
-  }
-
-  if (!APP_PUBLIC_URL) {
-    throw new Error("APP_PUBLIC_URL is not set");
-  }
-
-  const key = getUserRequestKey(userId);
-
-  const payment = await yookassaRequest("/payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: {
-        value: PREMIUM_PRICE_RUB,
-        currency: "RUB"
-      },
-      capture: true,
-      confirmation: {
-        type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/premium/return?user_id=${encodeURIComponent(key)}`
-      },
-      description: `Premium на ${PREMIUM_DURATION_DAYS} дней`,
-      metadata: {
-        user_id: key,
-        bot_key: BOT_KEY,
-        product: "premium_month"
-      }
-    }
-  });
-
-  if (!payment?.id) {
-    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
-  }
-
-  await dbPool.query(
-    `
-      INSERT INTO max_bot_premium_payments (
-        payment_id,
-        user_id,
-        bot_key,
-        status,
-        amount,
-        currency,
-        raw
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      ON CONFLICT (payment_id)
-      DO UPDATE SET
-        status = EXCLUDED.status,
-        raw = EXCLUDED.raw,
-        updated_at = NOW()
-    `,
-    [
-      String(payment.id),
-      key,
-      BOT_KEY,
-      String(payment.status || "pending"),
-      String(payment.amount?.value || PREMIUM_PRICE_RUB),
-      String(payment.amount?.currency || "RUB"),
-      JSON.stringify(payment)
-    ]
-  );
-
-  return payment;
-}
-
-async function getYooKassaPayment(paymentId) {
-  return yookassaRequest(`/payments/${encodeURIComponent(paymentId)}`, {
-    method: "GET"
-  });
-}
-
-async function applyPremiumPayment(payment) {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for premium payments");
-  }
-
-  const paymentId = String(payment?.id || "").trim();
-  const status = String(payment?.status || "").trim();
-  const paid = payment?.paid === true;
-  const amountValue = String(payment?.amount?.value || "");
-  const currency = String(payment?.amount?.currency || "");
-  const metadata = payment?.metadata || {};
-
-  const userId = String(metadata.user_id || "").trim();
-  const botKey = String(metadata.bot_key || "").trim();
-  const product = String(metadata.product || "").trim();
-
-  if (!paymentId || status !== "succeeded" || !paid) {
-    return { granted: false, reason: "payment_not_succeeded" };
-  }
-
-  if (!userId || botKey !== BOT_KEY || product !== "premium_month") {
-    return { granted: false, reason: "metadata_mismatch" };
-  }
-
-  if (currency !== "RUB" || Number(amountValue) < Number(PREMIUM_PRICE_RUB)) {
-    return { granted: false, reason: "amount_mismatch" };
-  }
-
-  const client = await dbPool.connect();
-
-  try {
-    await client.query("BEGIN");
-
-    const existingPayment = await client.query(
-      `
-        SELECT status
-        FROM max_bot_premium_payments
-        WHERE payment_id = $1
-        FOR UPDATE
-      `,
-      [paymentId]
-    );
-
-    const previousStatus = String(existingPayment.rows[0]?.status || "");
-
-    await client.query(
-      `
-        INSERT INTO max_bot_premium_payments (
-          payment_id,
-          user_id,
-          bot_key,
-          status,
-          amount,
-          currency,
-          raw
-        )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-        ON CONFLICT (payment_id)
-        DO UPDATE SET
-          status = EXCLUDED.status,
-          amount = EXCLUDED.amount,
-          currency = EXCLUDED.currency,
-          raw = EXCLUDED.raw,
-          updated_at = NOW()
-      `,
-      [
-        paymentId,
-        userId,
-        BOT_KEY,
-        status,
-        amountValue,
-        currency,
-        JSON.stringify(payment)
-      ]
-    );
-
-    if (previousStatus === "succeeded") {
-      await client.query("COMMIT");
-      return { granted: false, reason: "already_granted", userId };
-    }
-
-    const premiumResult = await client.query(
-      `
-        INSERT INTO max_bot_premium_users (
-          user_id,
-          bot_key,
-          premium_until,
-          last_payment_id
-        )
-        VALUES (
-          $1,
-          $2,
-          NOW() + ($3::int * INTERVAL '1 day'),
-          $4
-        )
-        ON CONFLICT (user_id, bot_key)
-        DO UPDATE SET
-          premium_until = GREATEST(NOW(), max_bot_premium_users.premium_until) + ($3::int * INTERVAL '1 day'),
-          last_payment_id = $4,
-          updated_at = NOW()
-        RETURNING premium_until
-      `,
-      [userId, BOT_KEY, PREMIUM_DURATION_DAYS, paymentId]
-    );
-
-    await client.query("COMMIT");
-
-    return {
-      granted: true,
-      userId,
-      premiumUntil: premiumResult.rows[0]?.premium_until
-    };
-  } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
-    throw error;
-  } finally {
-    client.release();
-  }
-}
-
 async function answerMaxCallback(callbackId, notification = "") {
   if (!callbackId) return false;
 
@@ -1589,14 +1259,14 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "📸 Создать фото",
+        text: "🖼️ Создать фото",
         payload: MENU_CREATE_PHOTO_PAYLOAD
       }
     ],
     [
       {
         type: "callback",
-        text: "🧑‍🦱 Реставрация фото",
+        text: "🛠️ Реставрация",
         payload: MENU_RESTORE_PHOTO_PAYLOAD
       }
     ],
@@ -1607,14 +1277,7 @@ function buildMainMenuButtons() {
         payload: MENU_CREATE_VIDEO_PAYLOAD
       }
     ]
-  ],
-    [
-      {
-        type: "callback",
-        text: "💵 Отключить лимиты",
-        payload: MENU_PREMIUM_PAYLOAD
-      }
-    ]; 
+  ];
 }
 
 async function sendMainMenu(target, prefixText = "") {
@@ -1648,7 +1311,7 @@ function buildBackButtonKeyboard() {
 
 async function sendCreatePhotoHelp(target) {
   const text =
-    "📸 **Создать фото Бесплатно**\n\n" +
+    "🖼️ *Создать фото*\n\n" +
     "Отправь:\n" +
     "• фото + промт (что изменить/добавить)\n" +
     "или\n" +
@@ -1668,7 +1331,7 @@ async function sendCreatePhotoHelp(target) {
 
 async function sendRestorationPhotoHelp(target) {
   const text =
-    "🛠️ **Реставрация фото**\n\n" +
+    "🛠️ *Реставрация фото*\n\n" +
     "Режим реставрации включён✅\n\n" +
     "*Теперь просто отправьте старую фотографию.* Можно отправить фото без текста или фото с любым текстом — текст будет проигнорирован.\n\n" +
     "Бот использует только встроенный промт аккуратной реалистичной реставрации.";
@@ -1687,7 +1350,7 @@ async function sendRestorationPhotoHelp(target) {
 
 async function sendCreateVideoHelp(target) {
   const text =
-    "🎬 **Оживить фото (демо)**\n\n" +
+    "🎬 *Оживить фото (демо)*\n\n" +
     "1) Отправь фото.\n" +
     "2) Напиши в сообщении, например: `оживи фото` или `создай видео`.\n" +
     "3) Можно добавлять эффекты прямо в промт (дождь, снег, неон и т.д.).";
@@ -1702,66 +1365,6 @@ async function sendCreateVideoHelp(target) {
   ];
 
   return sendMaxMessageWithAttachments(target, text, attachments);
-}
-
-function buildPremiumBuyUrl(userId) {
-  if (!APP_PUBLIC_URL) return "";
-
-  const url = new URL(`${APP_PUBLIC_URL}/premium/buy`);
-  url.searchParams.set("user_id", String(userId || ""));
-
-  return url.toString();
-}
-
-async function sendPremiumInfo(target, userId) {
-  const premiumUntil = await getUserPremiumUntil(userId);
-  const buyUrl = buildPremiumBuyUrl(userId);
-
-  let text =
-    "💸 **Отключить лимиты**\n\n" +
-    "*Что дает Премиум?*\n\n" +
-    "1. Вместо 4 фото в день Вы получите 10 фото с лучшей моделью.\n" +
-    "2. Вместо ChatGPT 8 запросов — 16 запросов в день.\n" +
-    "3. Уйдет обязательная подписка на каналы.\n\n" +
-    "Вы становитесь **Спонсором Бота** и членом нашей семьи.\n\n" +
-    "💳 Стоимость: *199 ₽ за 30 дней*.";
-
-  if (premiumUntil) {
-    text += `\n\n✅ Premium уже активен до: ${new Date(premiumUntil).toLocaleString("ru-RU")}`;
-  }
-
-  if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY) {
-    text += "\n\n⚠️ Оплата пока не настроена. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY.";
-  }
-
-  const buttons = [];
-
-  if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
-    buttons.push([
-      {
-        type: "link",
-        text: "💳 Купить Премиум — 199 ₽",
-        url: buyUrl
-      }
-    ]);
-  }
-
-  buttons.push([
-    {
-      type: "callback",
-      text: "⬅️ Назад к меню",
-      payload: MENU_BACK_PAYLOAD
-    }
-  ]);
-
-  return sendMaxMessageWithAttachments(target, text, [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons
-      }
-    }
-  ]);
 }
 
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
@@ -2914,15 +2517,13 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
   }
 
   // Берём текущие лимиты пользователя из БД (или памяти)
-  const userLimits = await getUserDailyLimits(userId);
+  const currentCounts = await getUserRequestCounts(userId);
 
   // Проверка дневного лимита по картинкам
-  if (await isRequestLimitReached(userId, "images", userLimits.images)) {
+  if (await isRequestLimitReached(userId, "images", IMAGE_REQUEST_LIMIT)) {
     await sendMaxMessage(
       target,
-      userLimits.premium
-        ? "🥱Вы достигли **Premium-лимита** на сегодня: 10 фото. Приходите позже и продолжайте."
-        : "🥱Вы достигли лимита на создание **Шедевров** сегодня, приходите позже и продолжайте"
+      "🥱Вы достигли лимита на создание **Шедевров** сегодня, приходите позже и продолжайте"
     );
     return;
   }
@@ -2947,19 +2548,13 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
   const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
 
   // Для первой картинки — другая модель/качество/размер
-  const imageOptions = userLimits.premium
+  const imageOptions = isFirstImageEver
     ? {
-        model: PREMIUM_IMAGE_MODEL,
-        size: PREMIUM_IMAGE_SIZE,
-        quality: PREMIUM_IMAGE_QUALITY
+        model: FIRST_IMAGE_MODEL,
+        size: FIRST_IMAGE_SIZE,
+        quality: FIRST_IMAGE_QUALITY
       }
-    : isFirstImageEver
-      ? {
-          model: FIRST_IMAGE_MODEL,
-          size: FIRST_IMAGE_SIZE,
-          quality: FIRST_IMAGE_QUALITY
-        }
-      : {};
+    : {};
 
   const imageBuffer = await runImageOpenAI(() =>
     inputImage
@@ -3081,7 +2676,7 @@ async function handleUpdate(update) {
 
       const text =
         `🙋🏻‍♂️ **Привет${namePrefix}**\n\n` +
-        "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/8Z6BsYfupgMq1Q) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
+        "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/e3gVPfUa3xKyiQ) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
         "Напишите вопрос прямо в **ЧАТ**✍ или выберите, что хотите сделать ниже:";
 
       await sendMainMenu(target, text);
@@ -3325,14 +2920,10 @@ async function handleUpdate(update) {
       return;
     }
 
-    const userLimits = await getUserDailyLimits(userId);
-
-    if (await isRequestLimitReached(userId, "chatgpt", userLimits.chatgpt)) {
+    if (await isRequestLimitReached(userId, "chatgpt", CHATGPT_REQUEST_LIMIT)) {
       await sendMaxMessage(
         target,
-        userLimits.premium
-          ? "Кажется вам надо немного отдохнуть от ИИ🏝️ **Premium-лимит на сегодня: 16 запросов**."
-          : "Кажется вам надо немного отдохнуть от ИИ🏝️, **приходите чуть позже и продолжайте**🦦"
+        "Кажется вам надо немного отдохнуть от ИИ🏝️, **приходите чуть позже и продолжайте**🦦"
       );
       return;
     }
@@ -3389,92 +2980,6 @@ app.get("/health", (req, res) => {
   res.status(200).type("text/plain").send("ok");
 });
 
-app.get("/premium/buy", async (req, res) => {
-  try {
-    const userId = String(req.query.user_id || "").trim();
-
-    if (!isValidUserIdForBroadcast(userId)) {
-      res.status(400).type("text/plain").send("Некорректный user_id.");
-      return;
-    }
-
-    const payment = await createYooKassaPremiumPayment(userId);
-    const confirmationUrl = payment?.confirmation?.confirmation_url;
-
-    if (!confirmationUrl) {
-      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
-    }
-
-    res.redirect(302, confirmationUrl);
-  } catch (error) {
-    console.error("Premium payment create failed:", error);
-    res
-      .status(500)
-      .type("text/plain")
-      .send("Не удалось создать платеж. Вернитесь в бота и попробуйте позже.");
-  }
-});
-
-app.get("/premium/return", (req, res) => {
-  res
-    .status(200)
-    .type("text/html; charset=utf-8")
-    .send(`
-      <html>
-        <body style="font-family: Arial, sans-serif; padding: 24px;">
-          <h2>Спасибо за оплату</h2>
-          <p>Если платеж прошел успешно, Premium будет активирован автоматически. Вернитесь в бот.</p>
-        </body>
-      </html>
-    `);
-});
-
-app.post("/yookassa/webhook", (req, res) => {
-  // YooKassa нужно быстро получить HTTP 200.
-  res.status(200).json({ ok: true });
-
-  const notification = req.body;
-
-  (async () => {
-    try {
-      const event = String(notification?.event || "");
-      const object = notification?.object || {};
-      const paymentId = String(object?.id || "").trim();
-
-      if (event !== "payment.succeeded" || !paymentId) {
-        return;
-      }
-
-      // Проверяем платеж повторно через YooKassa, чтобы не доверять голому webhook.
-      const payment = await getYooKassaPayment(paymentId);
-      const result = await applyPremiumPayment(payment);
-
-      if (result.granted && result.userId) {
-        await sendMaxMessage(
-          {
-            type: "user_id",
-            id: result.userId
-          },
-          [
-            "✅ **Премиум на месяц получен!**",
-            "",
-            "Теперь вам открыт доступ:",
-            "• 10 фото в день с лучшей моделью;",
-            "• 16 запросов ChatGPT в день;",
-            "• без обязательной подписки на каналы.",
-            "",
-            "Спасибо, вы стали Спонсором Бота и членом нашей семьи 🙌🏻"
-          ].join("\n")
-        ).catch((error) => {
-          console.warn("Failed to send premium success message:", error?.message || error);
-        });
-      }
-    } catch (error) {
-      console.error("YooKassa webhook processing failed:", error);
-    }
-  })();
-});
-
 app.post("/webhook", (req, res) => {
   if (MAX_WEBHOOK_SECRET) {
     const receivedSecret = req.get("X-Max-Bot-Api-Secret") || "";
@@ -3502,8 +3007,7 @@ resetDailyLimits();
 
 Promise.all([
   initBroadcastUsersDb(),
-  initLimitsDb(),
-  initPremiumDb()
+  initLimitsDb()
 ])
   .catch((error) => {
     console.warn("DB init failed:", error?.message || error);
