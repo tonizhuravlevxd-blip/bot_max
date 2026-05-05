@@ -10,7 +10,7 @@ const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const IMAGE_REQUEST_LIMIT = 4; 
-const CHATGPT_REQUEST_LIMIT = 9;
+const CHATGPT_REQUEST_LIMIT = 8;
 const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
 const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
   process.env.VIDEO_REQUESTS_BEFORE_SUBSCRIPTION || 1
@@ -894,13 +894,13 @@ function resetDailyLimits() {
 }
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1";
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5";
 const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
-const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "medium";
+const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
 const OPENAI_IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
 
 
-const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || "gpt-image-1"; // сюда можно поставить нужную модель
+const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || "gpt-image-1.5"; // сюда можно поставить нужную модель
 const FIRST_IMAGE_SIZE = process.env.FIRST_IMAGE_SIZE || "1024x1024";
 const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || "low";
 
