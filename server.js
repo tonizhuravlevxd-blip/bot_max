@@ -1941,7 +1941,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🧑‍🦱 Реставрация фото",
+        text: "🧩 Реставрация фото",
         payload: MENU_RESTORE_PHOTO_PAYLOAD
       }
     ],
@@ -1955,7 +1955,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🛒 Создать карточку товара — 79 ₽",
+        text: "🛍️ Создать карточку товара — 79 ₽",
         payload: MENU_PRODUCT_CARD_PAYLOAD
       }
     ],
@@ -2207,7 +2207,7 @@ async function sendProductCardInfo(target, userId) {
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
-    "🔒 Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на обязательные каналы и нажмите кнопку Я подписан.";
+    "🔒 **Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на ОБЯЗАТЕЛЬНЫЕ каналы внизу👇 и нажмите кнопку Я подписан(а)**.";
 
   // userId кладём в payload, чтобы по нему потом проверять
   const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
@@ -3986,7 +3986,7 @@ if (productCardModeActive) {
     }
 
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
-      status = await startDynamicStatus(target, "🦖Шедевр создается");
+      status = await startDynamicStatus(target, "🔮Шедевр создается");
 
       await handleImageRequest(update, target, userText, incomingImageUrl, userId);
 
