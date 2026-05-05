@@ -3081,7 +3081,7 @@ async function handleUpdate(update) {
 
       const text =
         `🙋🏻‍♂️ **Привет${namePrefix}**\n\n` +
-        "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/e3gVPfUa3xKyiQ) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
+        "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/8Z6BsYfupgMq1Q) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
         "Напишите вопрос прямо в **ЧАТ**✍ или выберите, что хотите сделать ниже:";
 
       await sendMainMenu(target, text);
