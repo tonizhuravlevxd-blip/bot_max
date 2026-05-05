@@ -3437,7 +3437,7 @@ app.get("/premium/return", (req, res) => {
     `);
 });
 
-app.post("/yookassa/webhook", (req, res) => {
+async function handleYooKassaWebhook(req, res) {
   // YooKassa нужно быстро получить HTTP 200.
   res.status(200).json({ ok: true });
 
@@ -3453,9 +3453,11 @@ app.post("/yookassa/webhook", (req, res) => {
         return;
       }
 
-      // Проверяем платеж повторно через YooKassa, чтобы не доверять голому webhook.
+      // Проверяем платеж повторно через YooKassa, чтобы не доверять только webhook.
       const payment = await getYooKassaPayment(paymentId);
       const result = await applyPremiumPayment(payment);
+
+      console.log("Premium payment apply result:", result);
 
       if (result.granted && result.userId) {
         await sendMaxMessage(
@@ -3481,7 +3483,10 @@ app.post("/yookassa/webhook", (req, res) => {
       console.error("YooKassa webhook processing failed:", error);
     }
   })();
-});
+}
+
+app.post("/yookassa-webhook", handleYooKassaWebhook);
+app.post("/yookassa/webhook", handleYooKassaWebhook);
 
 app.post("/webhook", (req, res) => {
   if (MAX_WEBHOOK_SECRET) {
