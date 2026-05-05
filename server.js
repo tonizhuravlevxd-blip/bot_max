@@ -580,6 +580,119 @@ const CONTEXT_TTL_MS = Number(process.env.CONTEXT_TTL_MS || 30 * 60_000);
 
 const userChatContexts = new Map();
 
+// Рандомные сообщения после 1–2 успешных генераций/ответов
+const RANDOM_NUDGE_ENABLED =
+  String(process.env.RANDOM_NUDGE_ENABLED || "true").toLowerCase() !== "false";
+
+const RANDOM_NUDGE_MIN_GENERATIONS = Number(
+  process.env.RANDOM_NUDGE_MIN_GENERATIONS || 1
+);
+
+const RANDOM_NUDGE_MAX_GENERATIONS = Number(
+  process.env.RANDOM_NUDGE_MAX_GENERATIONS || 2
+);
+
+// Сюда можешь добавлять свои фразы
+const RANDOM_NUDGE_MESSAGES = [
+  "💡 **Совет дня:** если ты сейчас отвлечёшься от телефона на 4 секунды — это может немного успокоить. Отвлёкся? Молодец 😌",
+
+  "🎁 Спасибо, что пользуешься ботом. Вот стикеры: https://example.com/stickers",
+
+  "🧠 Маленький совет: иногда лучший промт получается, если описать не только объект, но и стиль, свет, фон и настроение.",
+
+  "✨ Хочешь результат лучше? Добавляй в промт слова: **реалистично, детально, мягкий свет, кинематографично**.",
+
+  "🤖 Спасибо, что создаёшь вместе с ботом. Чем точнее запрос — тем круче результат."
+].filter(Boolean);
+
+// userId -> состояние рандомных подсказок
+const userRandomNudgeStates = new Map();
+
+function randomInt(min, max) {
+  const safeMin = Math.max(1, Math.floor(Number(min) || 1));
+  const safeMax = Math.max(safeMin, Math.floor(Number(max) || safeMin));
+
+  return Math.floor(Math.random() * (safeMax - safeMin + 1)) + safeMin;
+}
+
+function getNextRandomNudgeAfter() {
+  return randomInt(
+    RANDOM_NUDGE_MIN_GENERATIONS,
+    RANDOM_NUDGE_MAX_GENERATIONS
+  );
+}
+
+function getRandomNudgeState(userId) {
+  const key = String(userId || "unknown");
+
+  let state = userRandomNudgeStates.get(key);
+
+  if (!state) {
+    state = {
+      generatedSinceLastNudge: 0,
+      nextAfter: getNextRandomNudgeAfter(),
+      lastMessageIndex: -1
+    };
+
+    userRandomNudgeStates.set(key, state);
+  }
+
+  return state;
+}
+
+function pickRandomNudgeMessage(state) {
+  if (!RANDOM_NUDGE_MESSAGES.length) return "";
+
+  if (RANDOM_NUDGE_MESSAGES.length === 1) {
+    state.lastMessageIndex = 0;
+    return RANDOM_NUDGE_MESSAGES[0];
+  }
+
+  let index = randomInt(0, RANDOM_NUDGE_MESSAGES.length - 1);
+
+  // Чтобы одно и то же сообщение не повторялось два раза подряд
+  if (index === state.lastMessageIndex) {
+    index = (index + 1) % RANDOM_NUDGE_MESSAGES.length;
+  }
+
+  state.lastMessageIndex = index;
+
+  return RANDOM_NUDGE_MESSAGES[index];
+}
+
+async function maybeSendRandomNudgeAfterGeneration(target, userId) {
+  if (!RANDOM_NUDGE_ENABLED) return false;
+  if (!target) return false;
+  if (!RANDOM_NUDGE_MESSAGES.length) return false;
+
+  const state = getRandomNudgeState(userId);
+
+  state.generatedSinceLastNudge += 1;
+
+  if (state.generatedSinceLastNudge < state.nextAfter) {
+    return false;
+  }
+
+  state.generatedSinceLastNudge = 0;
+  state.nextAfter = getNextRandomNudgeAfter();
+
+  const message = pickRandomNudgeMessage(state);
+
+  if (!message) return false;
+
+  try {
+    await sendMaxMessage(target, message);
+    return true;
+  } catch (error) {
+    console.warn(
+      "Failed to send random nudge message:",
+      error?.message || error
+    );
+
+    return false;
+  }
+}
+
 function clipForContext(text) {
   return String(text || "").slice(0, CONTEXT_MAX_TEXT_CHARS);
 }
@@ -2447,6 +2560,9 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
   captionOverride || makeImageCaption(prompt, Boolean(inputImage)),
   imageBuffer
 );
+  
+await maybeSendRandomNudgeAfterGeneration(target, userId);
+  
 }
 
 async function handleVideoRequest(update, target, userText, incomingImageUrl, userId = target.id) {
@@ -2518,8 +2634,10 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
         "👉 `Оживи фото снег мягко`",
         "👉 `Оживи фото неон глич`"
       ].join("\n")
-    );
+    ); 
   }
+
+  await maybeSendRandomNudgeAfterGeneration(target, userId);
 }
 
 async function handleUpdate(update) {
@@ -2822,6 +2940,8 @@ async function handleUpdate(update) {
     status = null;
 
     await sendMaxMessage(target, answer);
+
+    await maybeSendRandomNudgeAfterGeneration(target, userId);
   } catch (error) {
     console.error("Update handling failed:", error);
 
