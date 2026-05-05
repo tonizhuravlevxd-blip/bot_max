@@ -3500,7 +3500,8 @@ resetDailyLimits();
 
 Promise.all([
   initBroadcastUsersDb(),
-  initLimitsDb()
+  initLimitsDb(),
+  initPremiumDb()
 ])
   .catch((error) => {
     console.warn("DB init failed:", error?.message || error);
