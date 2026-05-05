@@ -1334,47 +1334,51 @@ async function createYooKassaPremiumPayment(userId) {
 
   const key = getUserRequestKey(userId);
 
+  const price = Number(PREMIUM_PRICE_RUB || 199);
+  const priceValue = price.toFixed(2);
+
+  const description = "Премиум на месяц";
+
   const payment = await yookassaRequest("/payments", {
     method: "POST",
     idempotenceKey: crypto.randomUUID(),
-body: {
-  amount: {
-    value: PREMIUM_PRICE_RUB,
-    currency: "RUB"
-  },
-  capture: true,
-  confirmation: {
-    type: "redirect",
-    return_url: `${APP_PUBLIC_URL}/premium/return?user_id=${encodeURIComponent(key)}`
-  },
-  description: `Premium на ${PREMIUM_DURATION_DAYS} дней`,
-  metadata: {
-    user_id: key,
-    bot_key: BOT_KEY,
-    product: "premium_month"
-  },
-  receipt: {
-    customer: {
-      email: YOOKASSA_RECEIPT_EMAIL
-    },
-    items: [
-      {
-        description: `Premium доступ к MAX-боту на ${PREMIUM_DURATION_DAYS} дней`,
-        quantity: "1.00",
-        amount: {
-          value: PREMIUM_PRICE_RUB,
-          currency: "RUB"
+    body: {
+      amount: {
+        value: priceValue,
+        currency: "RUB"
+      },
+      confirmation: {
+        type: "redirect",
+        return_url: `${APP_PUBLIC_URL}/premium/return?user_id=${encodeURIComponent(key)}`
+      },
+      capture: true,
+      description: `${description} для user ${key}`,
+      metadata: {
+        user_id: key,
+        bot_key: BOT_KEY,
+        product: "premium_month",
+        type: "premium"
+      },
+      receipt: {
+        customer: {
+          email: `user${key}@example.com`
         },
-        vat_code: YOOKASSA_VAT_CODE,
-        payment_mode: "full_prepayment",
-        payment_subject: "service"
+        items: [
+          {
+            description,
+            quantity: "1.00",
+            amount: {
+              value: priceValue,
+              currency: "RUB"
+            },
+            vat_code: 1,
+            payment_mode: "full_payment",
+            payment_subject: "service"
+          }
+        ]
       }
-    ],
-    ...(YOOKASSA_TAX_SYSTEM_CODE
-      ? { tax_system_code: YOOKASSA_TAX_SYSTEM_CODE }
-      : {})
-  }
-}
+    }
+  });
 
   if (!payment?.id) {
     throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
@@ -1403,7 +1407,7 @@ body: {
       key,
       BOT_KEY,
       String(payment.status || "pending"),
-      String(payment.amount?.value || PREMIUM_PRICE_RUB),
+      String(payment.amount?.value || priceValue),
       String(payment.amount?.currency || "RUB"),
       JSON.stringify(payment)
     ]
