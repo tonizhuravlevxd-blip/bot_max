@@ -673,7 +673,7 @@ const RANDOM_NUDGE_MIN_GENERATIONS = Number(
 );
 
 const RANDOM_NUDGE_MAX_GENERATIONS = Number(
-  process.env.RANDOM_NUDGE_MAX_GENERATIONS || 2
+  process.env.RANDOM_NUDGE_MAX_GENERATIONS || 4
 );
 
 // Сюда можешь добавлять свои фразы
@@ -681,6 +681,8 @@ const RANDOM_NUDGE_MESSAGES = [
   "💡 **Совет дня:** если ты сейчас отвлечёшься от телефона на 4 секунды — это может немного успокоить и расслабить. Отвлёкся? Молодец 😌",
 
   "🎁 Спасибо, что пользуешься ботом. Вот **[СТИКЕРЫ](https://max.ru/stickerset/H-ZRhj8Ho-gSEXFkiTwVJqOpforgF83w7wyGrDq47VI)**",
+
+  "🚀 **Хочешь больше продаж на Wildberries и Ozon?** 📈 **MarketAI24** покажет, где ты теряешь *деньги* и как увеличить прибыль с помощью AI-аналитики. 🔥 Попробуй **[БЕСПЛАТНО](https://marketai24.ru/?ref=5ZFAWMVO)**",
 
   "🧠 Маленький совет: иногда лучший промт получается, если описать не только объект, но и стиль, свет, фон и настроение.",
 
@@ -1104,7 +1106,7 @@ const PRODUCT_CARD_IMAGE_SIZE =
   process.env.PRODUCT_CARD_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
 
 const PRODUCT_CARD_IMAGE_QUALITY =
-  process.env.PRODUCT_CARD_IMAGE_QUALITY || "medium";
+  process.env.PRODUCT_CARD_IMAGE_QUALITY || "high";
 
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
@@ -3342,64 +3344,94 @@ function safeUserError(error) {
 
 const PRODUCT_CARD_ANGLES = [
   {
-    title: "Фронтальная карточка",
+    title: "Главная карточка",
     instruction:
-      "front view, centered product, marketplace product card, clean premium background, clear readable product name"
+      "exact same product from the reference image, front-facing packshot, centered, pure clean marketplace background, premium studio lighting, preserve packaging exactly"
   },
   {
-    title: "Ракурс 3/4",
+    title: "Карточка 3/4",
     instruction:
-      "three-quarter view, product turned slightly, premium studio lighting, depth, shadows, realistic commercial photography"
+      "exact same product from the reference image, slight three-quarter view if possible, clean premium background, preserve packaging exactly, commercial product photography"
   },
   {
-    title: "Lifestyle-витрина",
+    title: "Премиальная подача",
     instruction:
-      "premium lifestyle product display, elegant composition, props matching the product category, expensive advertising look"
+      "exact same product from the reference image, elegant commercial composition, minimal premium props, preserve packaging exactly, luxury advertising look"
   }
 ];
 
 function buildProductCardPrompt(userText, angleIndex, hasInputImage) {
   const angle = PRODUCT_CARD_ANGLES[angleIndex] || PRODUCT_CARD_ANGLES[0];
 
-  return `
-Создай коммерческую карточку товара для маркетплейса.
+  if (hasInputImage) {
+    return `
+Создай профессиональную карточку товара для маркетплейса.
 
-Описание товара от пользователя:
-${String(userText || "").trim()}
+ВАЖНО: используй входное фото как точный исходник товара.
+Нужно сохранить именно тот товар, который изображён на фото.
+Не заменяй его другим товаром.
 
-Тип изображения:
+Тип карточки:
 ${angle.title}
 
-Техническое задание:
+Пожелания пользователя:
+${String(userText || "").trim()}
+
+Обязательные требования:
+- сохранить товар максимально точно;
+- сохранить форму упаковки;
+- сохранить цвет упаковки;
+- сохранить крышку, банку, флакон или тюбик без замены;
+- сохранить логотип;
+- сохранить название бренда;
+- сохранить весь читаемый текст максимально близко к оригиналу;
+- сохранить расположение надписей и элементов дизайна;
+- не создавать новый продукт;
+- не менять бренд;
+- не выдумывать новый текст;
+- не делать другую банку вместо исходной.
+
+Можно менять только:
+- фон;
+- свет;
+- композицию;
+- тени;
+- общую рекламную подачу.
+
+Техническое направление:
 ${angle.instruction}
 
-Главные требования:
-- Сделай красивую, дорогую, продающую карточку товара.
-- Товар должен быть главным объектом в кадре.
-- Изображение должно выглядеть как профессиональная рекламная фотография.
-- Свет: студийный, мягкий, дорогой, с аккуратными бликами.
-- Композиция: чистая, премиальная, без хаоса.
-- Фон: эстетичный, современный, подходит для маркетплейса.
-- Не добавляй лишние бренды, логотипы и водяные знаки.
-- Не добавляй людей, если пользователь явно не попросил.
-- Не создавай запрещённые или возрастные товары.
-- Не делай изображение похожим на скриншот или коллаж низкого качества.
+Результат:
+- дорогая, чистая, продающая карточка товара;
+- товар в центре внимания;
+- профессиональная коммерческая подача;
+- без интерфейса;
+- без коллажей;
+- без посторонних объектов, если они не нужны.
+`.trim();
+  }
 
-Работа с текстом и надписями:
-- Если пользователь указал название товара или текст на упаковке — используй его максимально точно.
-- Все надписи должны быть крупными, чистыми и читаемыми.
-- Не придумывай новые буквы, символы и слова.
-- Если есть входное фото, сохрани надписи, форму упаковки, цвет, логотип и внешний вид товара максимально близко к оригиналу.
-- Если точная надпись не видна на фото, не выдумывай её.
+  return `
+Создай профессиональную карточку товара для маркетплейса.
 
-${
-  hasInputImage
-    ? "Входное фото является главным референсом товара. Сохрани товар максимально точно, улучшай только подачу, свет, фон и коммерческий вид."
-    : "Фото товара нет, поэтому создай товар по описанию пользователя максимально реалистично и коммерчески привлекательно."
-}
+Описание товара:
+${String(userText || "").trim()}
 
-Формат результата:
-одно готовое изображение карточки товара, без поясняющего текста, без мокапных рамок, без интерфейса.
+Тип карточки:
+${angle.title}
+
+Техническое направление:
+${angle.instruction}
+
+Требования:
+- дорогой коммерческий вид;
+- чистая композиция;
+- профессиональный студийный свет;
+- товар главный объект;
+- без лишних брендов и водяных знаков.
+
+Результат:
+одно готовое изображение карточки товара.
 `.trim();
 }
 
