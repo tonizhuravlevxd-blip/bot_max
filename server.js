@@ -1589,14 +1589,14 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🖼️ Создать фото",
+        text: "📸 Создать фото",
         payload: MENU_CREATE_PHOTO_PAYLOAD
       }
     ],
     [
       {
         type: "callback",
-        text: "🛠️ Реставрация фото",
+        text: "🧑‍🦱 Реставрация фото",
         payload: MENU_RESTORE_PHOTO_PAYLOAD
       }
     ],
@@ -1648,7 +1648,7 @@ function buildBackButtonKeyboard() {
 
 async function sendCreatePhotoHelp(target) {
   const text =
-    "🖼️ *Создать фото Бесплатно*\n\n" +
+    "📸 **Создать фото Бесплатно**\n\n" +
     "Отправь:\n" +
     "• фото + промт (что изменить/добавить)\n" +
     "или\n" +
@@ -1668,7 +1668,7 @@ async function sendCreatePhotoHelp(target) {
 
 async function sendRestorationPhotoHelp(target) {
   const text =
-    "🛠️ *Реставрация фото*\n\n" +
+    "🛠️ **Реставрация фото**\n\n" +
     "Режим реставрации включён✅\n\n" +
     "*Теперь просто отправьте старую фотографию.* Можно отправить фото без текста или фото с любым текстом — текст будет проигнорирован.\n\n" +
     "Бот использует только встроенный промт аккуратной реалистичной реставрации.";
@@ -1687,7 +1687,7 @@ async function sendRestorationPhotoHelp(target) {
 
 async function sendCreateVideoHelp(target) {
   const text =
-    "🎬 *Оживить фото (демо)*\n\n" +
+    "🎬 **Оживить фото (демо)**\n\n" +
     "1) Отправь фото.\n" +
     "2) Напиши в сообщении, например: `оживи фото` или `создай видео`.\n" +
     "3) Можно добавлять эффекты прямо в промт (дождь, снег, неон и т.д.).";
@@ -1718,12 +1718,12 @@ async function sendPremiumInfo(target, userId) {
   const buyUrl = buildPremiumBuyUrl(userId);
 
   let text =
-    "🚀 *Отключить лимиты*\n\n" +
+    "💸 **Отключить лимиты**\n\n" +
     "*Что дает Премиум?*\n\n" +
     "1. Вместо 4 фото в день Вы получите 10 фото с лучшей моделью.\n" +
     "2. Вместо ChatGPT 8 запросов — 16 запросов в день.\n" +
     "3. Уйдет обязательная подписка на каналы.\n\n" +
-    "Вы становитесь *Спонсором Бота* и членом нашей семьи.\n\n" +
+    "Вы становитесь **Спонсором Бота** и членом нашей семьи.\n\n" +
     "💳 Стоимость: *199 ₽ за 30 дней*.";
 
   if (premiumUntil) {
