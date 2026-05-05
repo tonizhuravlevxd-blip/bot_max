@@ -28,6 +28,9 @@ const PREMIUM_IMAGE_REQUEST_LIMIT = Number(process.env.PREMIUM_IMAGE_REQUEST_LIM
 const PREMIUM_CHATGPT_REQUEST_LIMIT = Number(process.env.PREMIUM_CHATGPT_REQUEST_LIMIT || 16);
 const PREMIUM_DURATION_DAYS = Number(process.env.PREMIUM_DURATION_DAYS || 30);
 const PREMIUM_PRICE_RUB = process.env.PREMIUM_PRICE_RUB || "199.00";
+const PRODUCT_CARD_PRICE_RUB = process.env.PRODUCT_CARD_PRICE_RUB || "79.00";
+const PRODUCT_CARD_PRODUCT_CODE = "product_card";
+const PRODUCT_CARD_IMAGES_COUNT = Number(process.env.PRODUCT_CARD_IMAGES_COUNT || 3);
 
 const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || "";
 const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || "";
@@ -82,8 +85,10 @@ const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
 const MENU_RESTORE_PHOTO_PAYLOAD = "menu_restore_photo";
 const MENU_PREMIUM_PAYLOAD = "menu_premium";
 const MENU_BACK_PAYLOAD = "menu_back";
+const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
 
 const IMAGE_MODE_RESTORATION = "restoration";
+const IMAGE_MODE_PRODUCT_CARD = "product_card";
 
 const RESTORATION_PROMPT = `Реставрируй старую фотографию максимально аккуратно и реалистично.
 
@@ -125,6 +130,10 @@ function clearUserImageMode(userId) {
 
 function isRestorationMode(userId) {
   return getUserImageMode(userId) === IMAGE_MODE_RESTORATION;
+}
+
+function isProductCardMode(userId) {
+  return getUserImageMode(userId) === IMAGE_MODE_PRODUCT_CARD;
 }
 
 const FLOOD_WINDOW_MS = Number(process.env.FLOOD_WINDOW_MS || 10_000);
@@ -318,6 +327,22 @@ async function initPremiumDb() {
       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+
+  await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS max_bot_product_card_credits (
+    user_id TEXT NOT NULL,
+    bot_key TEXT NOT NULL,
+    credits INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, bot_key)
+  )
+`);
+
+await dbPool.query(`
+  CREATE INDEX IF NOT EXISTS idx_max_bot_product_card_credits_user_bot
+  ON max_bot_product_card_credits (user_id, bot_key)
+`);
 
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS idx_max_bot_premium_users_active
@@ -943,6 +968,73 @@ async function getUserDailyLimits(userId) {
   };
 }
 
+async function getProductCardCredits(userId) {
+  if (!dbPool) return 0;
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      SELECT credits
+      FROM max_bot_product_card_credits
+      WHERE user_id = $1 AND bot_key = $2
+      LIMIT 1
+    `,
+    [key, BOT_KEY]
+  );
+
+  return Number(result.rows[0]?.credits || 0);
+}
+
+async function addProductCardCredit(userId, credits = 1) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for product card credits");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      INSERT INTO max_bot_product_card_credits (user_id, bot_key, credits)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (user_id, bot_key)
+      DO UPDATE SET
+        credits = max_bot_product_card_credits.credits + EXCLUDED.credits,
+        updated_at = NOW()
+      RETURNING credits
+    `,
+    [key, BOT_KEY, credits]
+  );
+
+  return Number(result.rows[0]?.credits || 0);
+}
+
+async function consumeProductCardCredit(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for product card credits");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      UPDATE max_bot_product_card_credits
+      SET credits = credits - 1,
+          updated_at = NOW()
+      WHERE user_id = $1
+        AND bot_key = $2
+        AND credits > 0
+      RETURNING credits
+    `,
+    [key, BOT_KEY]
+  );
+
+  return {
+    consumed: Boolean(result.rows.length),
+    creditsLeft: Number(result.rows[0]?.credits || 0)
+  };
+}
+
 // Проверяем, достигнут ли лимит по типу
 async function isRequestLimitReached(userId, type, limit) {
   const counts = await getUserRequestCounts(userId);
@@ -1004,6 +1096,15 @@ const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || "low";
 const PREMIUM_IMAGE_MODEL = process.env.PREMIUM_IMAGE_MODEL || OPENAI_IMAGE_MODEL;
 const PREMIUM_IMAGE_SIZE = process.env.PREMIUM_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
 const PREMIUM_IMAGE_QUALITY = process.env.PREMIUM_IMAGE_QUALITY || "low";
+
+const PRODUCT_CARD_IMAGE_MODEL =
+  process.env.PRODUCT_CARD_IMAGE_MODEL || PREMIUM_IMAGE_MODEL;
+
+const PRODUCT_CARD_IMAGE_SIZE =
+  process.env.PRODUCT_CARD_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
+
+const PRODUCT_CARD_IMAGE_QUALITY =
+  process.env.PRODUCT_CARD_IMAGE_QUALITY || "medium";
 
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
@@ -1416,6 +1517,107 @@ async function createYooKassaPremiumPayment(userId) {
   return payment;
 }
 
+async function createYooKassaProductCardPayment(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for product card payments");
+  }
+
+  if (!APP_PUBLIC_URL) {
+    throw new Error("APP_PUBLIC_URL is not set");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const price = Number(PRODUCT_CARD_PRICE_RUB || 79);
+  const priceValue = price.toFixed(2);
+
+  const description = "Создание карточки товара";
+
+  const receipt = {
+    customer: {
+      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
+    },
+    items: [
+      {
+        description,
+        quantity: "1.00",
+        amount: {
+          value: priceValue,
+          currency: "RUB"
+        },
+        vat_code: YOOKASSA_VAT_CODE,
+        payment_mode: "full_payment",
+        payment_subject: "service"
+      }
+    ]
+  };
+
+  if (YOOKASSA_TAX_SYSTEM_CODE) {
+    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
+  }
+
+  const payment = await yookassaRequest("/payments", {
+    method: "POST",
+    idempotenceKey: crypto.randomUUID(),
+    body: {
+      amount: {
+        value: priceValue,
+        currency: "RUB"
+      },
+      confirmation: {
+        type: "redirect",
+        return_url: `${APP_PUBLIC_URL}/product-card/return?user_id=${encodeURIComponent(key)}`
+      },
+      capture: true,
+      description: `${description} для user ${key}`,
+      metadata: {
+        user_id: key,
+        bot_key: BOT_KEY,
+        product: PRODUCT_CARD_PRODUCT_CODE,
+        type: PRODUCT_CARD_PRODUCT_CODE
+      },
+      receipt
+    }
+  });
+
+  if (!payment?.id) {
+    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
+  }
+
+  await dbPool.query(
+    `
+      INSERT INTO max_bot_premium_payments (
+        payment_id,
+        user_id,
+        bot_key,
+        status,
+        amount,
+        currency,
+        raw
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      ON CONFLICT (payment_id)
+      DO UPDATE SET
+        status = EXCLUDED.status,
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        raw = EXCLUDED.raw,
+        updated_at = NOW()
+    `,
+    [
+      String(payment.id),
+      key,
+      BOT_KEY,
+      String(payment.status || "pending"),
+      String(payment.amount?.value || priceValue),
+      String(payment.amount?.currency || "RUB"),
+      JSON.stringify(payment)
+    ]
+  );
+
+  return payment;
+}
+
 async function getYooKassaPayment(paymentId) {
   return yookassaRequest(`/payments/${encodeURIComponent(paymentId)}`, {
     method: "GET"
@@ -1542,6 +1744,115 @@ async function applyPremiumPayment(payment) {
   }
 }
 
+async function applyProductCardPayment(payment) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for product card payments");
+  }
+
+  const paymentId = String(payment?.id || "").trim();
+  const status = String(payment?.status || "").trim();
+  const paid = payment?.paid === true;
+  const amountValue = String(payment?.amount?.value || "");
+  const currency = String(payment?.amount?.currency || "");
+  const metadata = payment?.metadata || {};
+
+  const userId = String(metadata.user_id || "").trim();
+  const botKey = String(metadata.bot_key || "").trim();
+  const product = String(metadata.product || "").trim();
+
+  if (!paymentId || status !== "succeeded" || !paid) {
+    return { granted: false, reason: "payment_not_succeeded" };
+  }
+
+  if (!userId || botKey !== BOT_KEY || product !== PRODUCT_CARD_PRODUCT_CODE) {
+    return { granted: false, reason: "metadata_mismatch" };
+  }
+
+  if (currency !== "RUB" || Number(amountValue) < Number(PRODUCT_CARD_PRICE_RUB)) {
+    return { granted: false, reason: "amount_mismatch" };
+  }
+
+  const client = await dbPool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingPayment = await client.query(
+      `
+        SELECT status
+        FROM max_bot_premium_payments
+        WHERE payment_id = $1
+        FOR UPDATE
+      `,
+      [paymentId]
+    );
+
+    const previousStatus = String(existingPayment.rows[0]?.status || "");
+
+    await client.query(
+      `
+        INSERT INTO max_bot_premium_payments (
+          payment_id,
+          user_id,
+          bot_key,
+          status,
+          amount,
+          currency,
+          raw
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        ON CONFLICT (payment_id)
+        DO UPDATE SET
+          status = EXCLUDED.status,
+          amount = EXCLUDED.amount,
+          currency = EXCLUDED.currency,
+          raw = EXCLUDED.raw,
+          updated_at = NOW()
+      `,
+      [
+        paymentId,
+        userId,
+        BOT_KEY,
+        status,
+        amountValue,
+        currency,
+        JSON.stringify(payment)
+      ]
+    );
+
+    if (previousStatus === "succeeded") {
+      await client.query("COMMIT");
+      return { granted: false, reason: "already_granted", userId };
+    }
+
+    const creditResult = await client.query(
+      `
+        INSERT INTO max_bot_product_card_credits (user_id, bot_key, credits)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (user_id, bot_key)
+        DO UPDATE SET
+          credits = max_bot_product_card_credits.credits + 1,
+          updated_at = NOW()
+        RETURNING credits
+      `,
+      [userId, BOT_KEY]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      granted: true,
+      userId,
+      credits: Number(creditResult.rows[0]?.credits || 0)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function answerMaxCallback(callbackId, notification = "") {
   if (!callbackId) return false;
 
@@ -1637,6 +1948,13 @@ function buildMainMenuButtons() {
         type: "callback",
         text: "🎬 Оживить фото (демо)",
         payload: MENU_CREATE_VIDEO_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
+        text: "🛒 Создать карточку товара — 79 ₽",
+        payload: MENU_PRODUCT_CARD_PAYLOAD
       }
     ],
     [
@@ -1745,6 +2063,15 @@ function buildPremiumBuyUrl(userId) {
   return url.toString();
 }
 
+function buildProductCardBuyUrl(userId) {
+  if (!APP_PUBLIC_URL) return "";
+
+  const url = new URL(`${APP_PUBLIC_URL}/product-card/buy`);
+  url.searchParams.set("user_id", String(userId || ""));
+
+  return url.toString();
+}
+
 async function sendPremiumInfo(target, userId) {
   const premiumUntil = await getUserPremiumUntil(userId);
   const buyUrl = buildPremiumBuyUrl(userId);
@@ -1773,6 +2100,85 @@ async function sendPremiumInfo(target, userId) {
       {
         type: "link",
         text: "💳 Купить Премиум — 199 ₽",
+        url: buyUrl
+      }
+    ]);
+  }
+
+  buttons.push([
+    {
+      type: "callback",
+      text: "⬅️ Назад к меню",
+      payload: MENU_BACK_PAYLOAD
+    }
+  ]);
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons
+      }
+    }
+  ]);
+}
+
+async function sendProductCardInfo(target, userId) {
+  const credits = await getProductCardCredits(userId);
+  const buyUrl = buildProductCardBuyUrl(userId);
+
+  if (credits > 0) {
+    setUserImageMode(userId, IMAGE_MODE_PRODUCT_CARD);
+
+    return sendMaxMessageWithAttachments(
+      target,
+      [
+        "🛒 **Режим карточки товара включён.**",
+        "",
+        `У вас доступно оплаченных пакетов: **${credits}**.`,
+        "",
+        "Теперь отправьте:",
+        "• **фото товара + промт** — лучший вариант для точности;",
+        "или",
+        "• **просто промт товара** — если фото нет.",
+        "",
+        "Бот создаст **3 красивые карточки товара с разных ракурсов**.",
+        "",
+        "Пример промта:",
+        "`Банка крема Nuvelora, премиальный бело-золотой дизайн, для маркетплейса, чистый фон, дорогой свет, надпись Nuvelora Anti-Age Cream`"
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: buildBackButtonKeyboard()
+          }
+        }
+      ]
+    );
+  }
+
+  let text =
+    "🛒 **Создать карточку товара**\n\n" +
+    "Стоимость: **79 ₽** за один пакет.\n\n" +
+    "После оплаты вы сможете отправить **фото товара + промт** или просто **описание товара**.\n\n" +
+    "Бот создаст **3 изображения товара**:\n" +
+    "• фронтальная карточка;\n" +
+    "• ракурс 3/4;\n" +
+    "• lifestyle / премиальная витрина.\n\n" +
+    "Для максимально точных надписей лучше отправлять фото товара, где текст уже есть на упаковке.";
+
+  if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY) {
+    text += "\n\n⚠️ Оплата пока не настроена. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID и YOOKASSA_SECRET_KEY.";
+  }
+
+  const buttons = [];
+
+  if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
+    buttons.push([
+      {
+        type: "link",
+        text: "💳 Купить за 79 ₽",
         url: buyUrl
       }
     ]);
@@ -2934,6 +3340,69 @@ function safeUserError(error) {
   return "Произошла ошибка при обработке запроса.";
 }
 
+const PRODUCT_CARD_ANGLES = [
+  {
+    title: "Фронтальная карточка",
+    instruction:
+      "front view, centered product, marketplace product card, clean premium background, clear readable product name"
+  },
+  {
+    title: "Ракурс 3/4",
+    instruction:
+      "three-quarter view, product turned slightly, premium studio lighting, depth, shadows, realistic commercial photography"
+  },
+  {
+    title: "Lifestyle-витрина",
+    instruction:
+      "premium lifestyle product display, elegant composition, props matching the product category, expensive advertising look"
+  }
+];
+
+function buildProductCardPrompt(userText, angleIndex, hasInputImage) {
+  const angle = PRODUCT_CARD_ANGLES[angleIndex] || PRODUCT_CARD_ANGLES[0];
+
+  return `
+Создай коммерческую карточку товара для маркетплейса.
+
+Описание товара от пользователя:
+${String(userText || "").trim()}
+
+Тип изображения:
+${angle.title}
+
+Техническое задание:
+${angle.instruction}
+
+Главные требования:
+- Сделай красивую, дорогую, продающую карточку товара.
+- Товар должен быть главным объектом в кадре.
+- Изображение должно выглядеть как профессиональная рекламная фотография.
+- Свет: студийный, мягкий, дорогой, с аккуратными бликами.
+- Композиция: чистая, премиальная, без хаоса.
+- Фон: эстетичный, современный, подходит для маркетплейса.
+- Не добавляй лишние бренды, логотипы и водяные знаки.
+- Не добавляй людей, если пользователь явно не попросил.
+- Не создавай запрещённые или возрастные товары.
+- Не делай изображение похожим на скриншот или коллаж низкого качества.
+
+Работа с текстом и надписями:
+- Если пользователь указал название товара или текст на упаковке — используй его максимально точно.
+- Все надписи должны быть крупными, чистыми и читаемыми.
+- Не придумывай новые буквы, символы и слова.
+- Если есть входное фото, сохрани надписи, форму упаковки, цвет, логотип и внешний вид товара максимально близко к оригиналу.
+- Если точная надпись не видна на фото, не выдумывай её.
+
+${
+  hasInputImage
+    ? "Входное фото является главным референсом товара. Сохрани товар максимально точно, улучшай только подачу, свет, фон и коммерческий вид."
+    : "Фото товара нет, поэтому создай товар по описанию пользователя максимально реалистично и коммерчески привлекательно."
+}
+
+Формат результата:
+одно готовое изображение карточки товара, без поясняющего текста, без мокапных рамок, без интерфейса.
+`.trim();
+}
+
 async function handleImageRequest(update, target, userText, incomingImageUrl, userId = target.id, captionOverride = "") {
   const prompt = String(userText || "").trim();
 
@@ -3009,6 +3478,83 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
 
 await maybeSendRandomNudgeAfterGeneration(target, userId);
 
+}
+
+async function handleProductCardRequest(update, target, userText, incomingImageUrl, userId = target.id) {
+  const prompt = String(userText || "").trim();
+
+  if (!prompt) {
+    await sendMaxMessage(
+      target,
+      "🛒 Отправьте описание товара. Лучше всего: **фото товара + промт**.\n\nПример: `Крем для лица Nuvelora, бело-золотая упаковка, премиальная карточка для маркетплейса, чистый фон, четкая надпись Nuvelora`"
+    );
+    return;
+  }
+
+  const credits = await getProductCardCredits(userId);
+
+  if (credits <= 0) {
+    clearUserImageMode(userId);
+    await sendProductCardInfo(target, userId);
+    return;
+  }
+
+  const inputImage = incomingImageUrl ? await downloadIncomingImage(incomingImageUrl) : null;
+
+  const imageOptions = {
+    model: PRODUCT_CARD_IMAGE_MODEL,
+    size: PRODUCT_CARD_IMAGE_SIZE,
+    quality: PRODUCT_CARD_IMAGE_QUALITY
+  };
+
+  const imageBuffers = [];
+
+  for (let i = 0; i < PRODUCT_CARD_IMAGES_COUNT; i += 1) {
+    const productPrompt = buildProductCardPrompt(prompt, i, Boolean(inputImage));
+
+    console.log("Product card generation:", {
+      userId,
+      index: i + 1,
+      model: imageOptions.model,
+      size: imageOptions.size,
+      quality: imageOptions.quality
+    });
+
+    const imageBuffer = await runImageOpenAI(() =>
+      inputImage
+        ? editOpenAIImage(productPrompt, inputImage, imageOptions)
+        : generateOpenAIImage(productPrompt, imageOptions)
+    );
+
+    imageBuffers.push(imageBuffer);
+  }
+
+  for (let i = 0; i < imageBuffers.length; i += 1) {
+    await sendMaxImage(
+      target,
+      `🛒 Карточка товара ${i + 1}/${imageBuffers.length}`,
+      imageBuffers[i]
+    );
+  }
+
+  const consumeResult = await consumeProductCardCredit(userId);
+
+  clearUserImageMode(userId);
+
+  if (!consumeResult.consumed) {
+    console.warn(`Product card credit was not consumed for user ${userId}`);
+  }
+
+  await sendMaxMessage(
+    target,
+    [
+      "✅ **Готово.** Создал 3 карточки товара.",
+      "",
+      `Осталось оплаченных пакетов: **${consumeResult.creditsLeft || 0}**.`,
+      "",
+      "Если нужна ещё одна карточка товара — нажмите кнопку в меню и купите новый пакет."
+    ].join("\n")
+  );
 }
 
 async function handleVideoRequest(update, target, userText, incomingImageUrl, userId = target.id) {
@@ -3209,6 +3755,14 @@ async function handleUpdate(update) {
         return;
       }
 
+      // 5) Меню: Создать карточку товара
+      if (callbackPayload === MENU_PRODUCT_CARD_PAYLOAD) {
+        clearUserImageMode(userId);
+
+        await sendProductCardInfo(target, userId);
+        return;
+      }
+
       // 5) Меню: Отключить лимиты / Premium
       if (callbackPayload === MENU_PREMIUM_PAYLOAD) {
         clearUserImageMode(userId);
@@ -3320,6 +3874,39 @@ async function handleUpdate(update) {
 
       return;
     }
+
+    if (isProductCardMode(userId)) {
+  if (!userText) {
+    await sendMaxMessage(
+      target,
+      "🛒 Режим карточки товара включён. Отправьте **фото + промт** или просто **описание товара**."
+    );
+    return;
+  }
+
+  if (isUserBusy(userId)) {
+    await sendBusyWarningIfNeeded(target, userId, firstName);
+    return;
+  }
+
+  lockUserProcessing(userId);
+  processingLocked = true;
+
+  status = await startDynamicStatus(target, "🛒 Карточки товара создаются");
+
+  await handleProductCardRequest(
+    update,
+    target,
+    userText,
+    incomingImageUrl,
+    userId
+  );
+
+  await status.stop();
+  status = null;
+
+  return;
+}
 
     if (!userText && incomingImageUrl) {
       await sendMaxMessage(
@@ -3455,6 +4042,32 @@ app.get("/premium/buy", async (req, res) => {
   }
 });
 
+app.get("/product-card/buy", async (req, res) => {
+  try {
+    const userId = String(req.query.user_id || "").trim();
+
+    if (!isValidUserIdForBroadcast(userId)) {
+      res.status(400).type("text/plain").send("Некорректный user_id.");
+      return;
+    }
+
+    const payment = await createYooKassaProductCardPayment(userId);
+    const confirmationUrl = payment?.confirmation?.confirmation_url;
+
+    if (!confirmationUrl) {
+      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
+    }
+
+    res.redirect(302, confirmationUrl);
+  } catch (error) {
+    console.error("Product card payment create failed:", error);
+    res
+      .status(500)
+      .type("text/plain")
+      .send("Не удалось создать платеж за карточку товара. Вернитесь в бота и попробуйте позже.");
+  }
+});
+
 app.get("/premium/return", (req, res) => {
   res
     .status(200)
@@ -3464,6 +4077,20 @@ app.get("/premium/return", (req, res) => {
         <body style="font-family: Arial, sans-serif; padding: 24px;">
           <h2>Спасибо за оплату</h2>
           <p>Если платеж прошел успешно, Premium будет активирован автоматически. Вернитесь в бот.</p>
+        </body>
+      </html>
+    `);
+});
+
+app.get("/product-card/return", (req, res) => {
+  res
+    .status(200)
+    .type("text/html; charset=utf-8")
+    .send(`
+      <html>
+        <body style="font-family: Arial, sans-serif; padding: 24px;">
+          <h2>Спасибо за оплату</h2>
+          <p>Если платеж прошел успешно, доступ к созданию карточки товара будет активирован автоматически. Вернитесь в бот.</p>
         </body>
       </html>
     `);
@@ -3486,37 +4113,79 @@ async function handleYooKassaWebhook(req, res) {
       }
 
       // Проверяем платеж повторно через YooKassa, чтобы не доверять только webhook.
-      const payment = await getYooKassaPayment(paymentId);
-      const result = await applyPremiumPayment(payment);
+const payment = await getYooKassaPayment(paymentId);
+const metadata = payment?.metadata || {};
+const product = String(metadata.product || "").trim();
 
-      console.log("Premium payment apply result:", result);
+if (product === "premium_month") {
+  const result = await applyPremiumPayment(payment);
 
-      if (result.granted && result.userId) {
-        await sendMaxMessage(
-          {
-            type: "user_id",
-            id: result.userId
-          },
-          [
-            "✅ **Премиум на месяц получен!**",
-            "",
-            "Теперь вам открыт доступ:",
-            "• 10 фото в день с лучшей моделью;",
-            "• 16 запросов ChatGPT в день;",
-            "• без обязательной подписки на каналы.",
-            "",
-            "Спасибо, вы стали Спонсором Бота и членом нашей семьи 🙌🏻"
-          ].join("\n")
-        ).catch((error) => {
-          console.warn("Failed to send premium success message:", error?.message || error);
-        });
-      }
-    } catch (error) {
-      console.error("YooKassa webhook processing failed:", error);
-    }
-  })();
+  console.log("Premium payment apply result:", result);
+
+  if (result.granted && result.userId) {
+    await sendMaxMessage(
+      {
+        type: "user_id",
+        id: result.userId
+      },
+      [
+        "✅ **Премиум на месяц получен!**",
+        "",
+        "Теперь вам открыт доступ:",
+        "• 10 фото в день с лучшей моделью;",
+        "• 16 запросов ChatGPT в день;",
+        "• без обязательной подписки на каналы.",
+        "",
+        "Спасибо, вы стали Спонсором Бота и членом нашей семьи 🙌🏻"
+      ].join("\n")
+    ).catch((error) => {
+      console.warn("Failed to send premium success message:", error?.message || error);
+    });
+  }
+
+  return;
 }
 
+if (product === PRODUCT_CARD_PRODUCT_CODE) {
+  const result = await applyProductCardPayment(payment);
+
+  console.log("Product card payment apply result:", result);
+
+  if (result.granted && result.userId) {
+    setUserImageMode(result.userId, IMAGE_MODE_PRODUCT_CARD);
+
+    await sendMaxMessage(
+      {
+        type: "user_id",
+        id: result.userId
+      },
+      [
+        "✅ **Оплата прошла. Доступ к карточке товара открыт.**",
+        "",
+        "Теперь отправьте:",
+        "• **фото товара + промт** — лучший вариант;",
+        "или",
+        "• **просто промт товара**.",
+        "",
+        "Я создам **3 красивые карточки товара с разных ракурсов**.",
+        "",
+        "Пример:",
+        "`Крем для лица Nuvelora, премиальная бело-золотая карточка для маркетплейса, чистый фон, четкая надпись Nuvelora`"
+      ].join("\n")
+    ).catch((error) => {
+      console.warn("Failed to send product card success message:", error?.message || error);
+    });
+  }
+
+  return;
+}
+
+console.warn("Unknown YooKassa product:", {
+  paymentId,
+  product,
+  metadata
+});
+      
 app.post("/yookassa-webhook", handleYooKassaWebhook);
 app.post("/yookassa/webhook", handleYooKassaWebhook);
 
