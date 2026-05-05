@@ -32,22 +32,22 @@ const CHATGPT_REQUESTS_BEFORE_SUBSCRIPTION = Number(
 const REQUIRED_CHANNELS = [
   {
     id: process.env.REQUIRED_CHANNEL_ID || "-73970192098593",
-    url: process.env.REQUIRED_CHANNEL_URL || "https://max.ru/id236700415542_biz",
+    url: process.env.REQUIRED_CHANNEL_URL || "https://max.ru/id503501079307_1_bot?startapp=TLb08ea5db5d65",
     title: "Наш Канал"
   },
   {
     id: process.env.REQUIRED_CHANNEL_ID_2 || "-74096616285473",
-    url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/join/P7GhkQ-vh7uGxJE2UYOY4QoDG27pJLFh1yfA9tj-ag0",
+    url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/id503501079307_1_bot?startapp=TL78917b331549",
     title: "Канал 2"
   },
   {
     id: process.env.REQUIRED_CHANNEL_ID_3 || "-74290803017086",
-    url: process.env.REQUIRED_CHANNEL_URL_3 || "https://max.ru/id231711659887_biz",
+    url: process.env.REQUIRED_CHANNEL_URL_3 || "https://max.ru/id503501079307_1_bot?startapp=TL35c6e5db6065",
     title: "Канал 3"
   },
   {
     id: process.env.REQUIRED_CHANNEL_ID_4 || "-74285880911137",
-    url: process.env.REQUIRED_CHANNEL_URL_4 || "https://max.ru/join/WHDVfDYqIn_XDn5Zt345Oibq_LwVLLDGyYRzcCg9qYU",
+    url: process.env.REQUIRED_CHANNEL_URL_4 || "https://max.ru/id503501079307_1_bot?startapp=TLa8ca24f310fa",
     title: "Канал 4"
   }
 ].filter((channel) => channel.id);
