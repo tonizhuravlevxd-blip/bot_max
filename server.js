@@ -1104,7 +1104,7 @@ const PRODUCT_CARD_IMAGE_SIZE =
   process.env.PRODUCT_CARD_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
 
 const PRODUCT_CARD_IMAGE_QUALITY =
-  process.env.PRODUCT_CARD_IMAGE_QUALITY || "low";
+  process.env.PRODUCT_CARD_IMAGE_QUALITY || "medium";
 
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
 const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
@@ -3875,13 +3875,21 @@ async function handleUpdate(update) {
       return;
     }
 
-const productCardCreditsForAutoMode = await getProductCardCredits(userId);
+const productCardModeActive = isProductCardMode(userId);
 
-if (isProductCardMode(userId) || productCardCreditsForAutoMode > 0) {
-  if (!userText) {
+if (productCardModeActive) {
+  if (!userText && !incomingImageUrl) {
     await sendMaxMessage(
       target,
       "🛒 Режим карточки товара включён. Отправьте **фото + промт** или просто **описание товара**."
+    );
+    return;
+  }
+
+  if (!userText && incomingImageUrl) {
+    await sendMaxMessage(
+      target,
+      "🛒 Фото получил. Теперь отправьте **описание товара / промт**.\n\nНапример:\n`Крем для лица Nuvelora, бело-золотая упаковка, премиальная карточка для маркетплейса, чистый фон, четкая надпись Nuvelora`"
     );
     return;
   }
@@ -3890,6 +3898,25 @@ if (isProductCardMode(userId) || productCardCreditsForAutoMode > 0) {
     await sendBusyWarningIfNeeded(target, userId, firstName);
     return;
   }
+
+  lockUserProcessing(userId);
+  processingLocked = true;
+
+  status = await startDynamicStatus(target, "🛒 Карточки товара создаются");
+
+  await handleProductCardRequest(
+    update,
+    target,
+    userText,
+    incomingImageUrl,
+    userId
+  );
+
+  await status.stop();
+  status = null;
+
+  return;
+}
 
   lockUserProcessing(userId);
   processingLocked = true;
