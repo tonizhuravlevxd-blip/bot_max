@@ -3622,28 +3622,98 @@ async function sendMaxImage(target, text, imageBuffer) {
   throw lastError;
 }
 
+function getGeminiBlockReason(data) {
+  return String(
+    data?.promptFeedback?.blockReason ||
+    data?.prompt_feedback?.block_reason ||
+    ""
+  ).trim();
+}
+
+class GeminiPromptBlockedError extends Error {
+  constructor(blockReason, data) {
+    super(`Gemini prompt blocked: ${blockReason}`);
+    this.name = "GeminiPromptBlockedError";
+    this.code = "GEMINI_PROMPT_BLOCKED";
+    this.blockReason = blockReason;
+    this.data = data;
+    this.userMessage = [
+      "⚠️ **Lyria не смогла создать музыку по этому описанию.**",
+      "",
+      `Причина: промт заблокирован фильтром Gemini: **${blockReason}**.`,
+      "",
+      "Кредит не списан. Отправьте описание заново.",
+      "",
+      "Лучше писать так:",
+      "• жанр: поп, электроника, рок, джаз, lo-fi;",
+      "• настроение: энергично, спокойно, премиально, летне;",
+      "• инструменты: гитара, пианино, синтезатор, барабаны;",
+      "• вокал: без вокала / мягкий женский вокал / мужской вокал;",
+      "• не просите стиль конкретного артиста, существующую песню или узнаваемую мелодию.",
+      "",
+      "Пример:",
+      "`30-секундный энергичный поп-трек для рекламы кафе, летнее настроение, гитара, лёгкий вокал, современный бит`"
+    ].join("\n");
+  }
+}
+
 function extractGeminiMusicResult(data) {
-  const parts = data?.candidates?.[0]?.content?.parts || [];
+  const blockReason = getGeminiBlockReason(data);
+
+  if (blockReason) {
+    throw new GeminiPromptBlockedError(blockReason, data);
+  }
+
+  const candidate = data?.candidates?.[0];
+
+  if (!candidate) {
+    throw new Error(
+      `Gemini Lyria returned no candidates: ${JSON.stringify(data).slice(0, 1200)}`
+    );
+  }
+
+  const finishReason = String(
+    candidate?.finishReason ||
+    candidate?.finish_reason ||
+    ""
+  ).trim();
+
+  if (/SAFETY|PROHIBITED_CONTENT|BLOCKLIST|IMAGE_SAFETY/i.test(finishReason)) {
+    throw new GeminiPromptBlockedError(finishReason, data);
+  }
+
+  const parts = candidate?.content?.parts || [];
 
   let audioBase64 = "";
   let mimeType = "audio/mpeg";
   const textParts = [];
 
   for (const part of parts) {
-    if (part?.text) {
-      textParts.push(String(part.text));
+    if (typeof part?.text === "string" && part.text.trim()) {
+      textParts.push(part.text.trim());
     }
 
     const inlineData = part?.inlineData || part?.inline_data;
 
     if (inlineData?.data) {
       audioBase64 = String(inlineData.data);
-      mimeType = String(inlineData.mimeType || inlineData.mime_type || "audio/mpeg");
+      mimeType = String(
+        inlineData.mimeType ||
+        inlineData.mime_type ||
+        "audio/mpeg"
+      );
     }
   }
 
   if (!audioBase64) {
-    throw new Error(`Gemini Lyria did not return audio: ${JSON.stringify(data).slice(0, 1000)}`);
+    throw new Error(
+      [
+        "Gemini Lyria returned candidates but no audio.",
+        `finishReason=${finishReason || "none"}`,
+        `text=${textParts.join("\n").slice(0, 500)}`,
+        `response=${JSON.stringify(data).slice(0, 1200)}`
+      ].join(" ")
+    );
   }
 
   return {
@@ -3660,11 +3730,18 @@ async function generateGeminiMusic(prompt) {
 
   const cleanPrompt = String(prompt || "").trim();
 
+  if (!cleanPrompt) {
+    throw new Error("Music prompt is empty");
+  }
+
   const finalPrompt = [
-    "Create a 30-second music track.",
-    "Output must be suitable for use as original AI-generated background music.",
-    "Do not imitate any specific real artist, copyrighted song, or recognizable melody.",
+    "Create a 30-second original music track.",
+    "The result must be original AI-generated music.",
+    "Do not imitate any specific real artist, band, copyrighted song, soundtrack, jingle, or recognizable melody.",
+    "Do not include hateful, explicit, dangerous, or illegal themes.",
+    "Use generic musical descriptors only: genre, mood, tempo, instruments, vocals, arrangement, and intended use.",
     "",
+    "User music brief:",
     cleanPrompt
   ].join("\n");
 
@@ -3679,16 +3756,14 @@ async function generateGeminiMusic(prompt) {
       body: JSON.stringify({
         contents: [
           {
+            role: "user",
             parts: [
               {
                 text: finalPrompt
               }
             ]
           }
-        ],
-        generationConfig: {
-          responseModalities: ["AUDIO", "TEXT"]
-        }
+        ]
       })
     }
   );
@@ -3701,6 +3776,7 @@ async function generateGeminiMusic(prompt) {
 
   return extractGeminiMusicResult(data);
 }
+
 async function makeVideoFromWorkerViaHttp({ inputBuffer, prompt }) {
   if (!WORKER_MAKE_VIDEO_URL) {
     throw new Error("WORKER_MAKE_VIDEO_URL is not set");
@@ -3937,10 +4013,25 @@ function makeImageCaption(prompt, edited) {
 }
 
 function safeUserError(error) {
+  if (error?.userMessage) {
+    return error.userMessage;
+  }
+
   const message = String(error?.message || error || "Unknown error");
 
+  if (/PROHIBITED_CONTENT|promptFeedback|blockReason|prompt blocked|SAFETY|BLOCKLIST|IMAGE_SAFETY/i.test(message)) {
+    return [
+      "⚠️ Запрос был заблокирован фильтром безопасности Gemini.",
+      "",
+      "Кредит не списан. Попробуйте переформулировать описание без реальных артистов, существующих песен, узнаваемых мелодий и спорных тем.",
+      "",
+      "Пример:",
+      "`30-секундный энергичный поп-трек, летнее настроение, гитара, лёгкий вокал, современный рекламный бит`"
+    ].join("\n");
+  }
+
   if (/content_policy|safety|moderation/i.test(message)) {
-    return "📲Не получилось создать изображение: запрос не прошёл проверку безопасности.Попробуйте изменить описание";
+    return "📲Не получилось создать изображение: запрос не прошёл проверку безопасности. Попробуйте изменить описание";
   }
 
   if (/OpenAI/i.test(message)) {
@@ -3948,8 +4039,8 @@ function safeUserError(error) {
   }
 
   if (/Gemini|Lyria|generativelanguage/i.test(message)) {
-  return "Не получилось создать музыку через Gemini/Lyria. Проверьте GEMINI_API_KEY, доступ к модели, биллинг и лимиты аккаунта.";
-}
+    return "Не получилось создать музыку через Gemini/Lyria. Проверьте GEMINI_API_KEY, доступ к модели, биллинг и лимиты аккаунта.";
+  }
 
   if (/MAX/i.test(message)) {
     return "Не получилось отправить ответ в MAX. Проверьте токен, webhook и права бота.";
@@ -4229,7 +4320,24 @@ async function handleMusicRequest(update, target, userText, userId = target.id) 
     return;
   }
 
-  const result = await runMusicGemini(() => generateGeminiMusic(prompt));
+  let result;
+
+  try {
+    result = await runMusicGemini(() => generateGeminiMusic(prompt));
+  } catch (error) {
+    if (error?.code === "GEMINI_PROMPT_BLOCKED") {
+      console.warn("Gemini/Lyria prompt blocked:", {
+        userId,
+        blockReason: error.blockReason,
+        prompt: prompt.slice(0, 500)
+      });
+
+      await sendMaxMessage(target, error.userMessage);
+      return;
+    }
+
+    throw error;
+  }
 
   await sendMaxAudio(
     target,
