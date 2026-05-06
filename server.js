@@ -1287,6 +1287,8 @@ function createConcurrencyLimiter(maxConcurrent) {
 
 const runTextOpenAI = createConcurrencyLimiter(OPENAI_TEXT_CONCURRENCY);
 const runImageOpenAI = createConcurrencyLimiter(OPENAI_IMAGE_CONCURRENCY);
+const GEMINI_MUSIC_CONCURRENCY = Number(process.env.GEMINI_MUSIC_CONCURRENCY || 1);
+const runMusicGemini = createConcurrencyLimiter(GEMINI_MUSIC_CONCURRENCY);
 
 function getIncomingText(update) {
   return update?.message?.body?.text?.trim() || update?.payload?.trim() || "";
@@ -3661,7 +3663,7 @@ async function generateGeminiMusic(prompt) {
   const finalPrompt = [
     "Create a 30-second music track.",
     "Output must be suitable for use as original AI-generated background music.",
-    "Do not imitate any specific real artist or copyrighted song.",
+    "Do not imitate any specific real artist, copyrighted song, or recognizable melody.",
     "",
     cleanPrompt
   ].join("\n");
@@ -3683,7 +3685,10 @@ async function generateGeminiMusic(prompt) {
               }
             ]
           }
-        ]
+        ],
+        generationConfig: {
+          responseModalities: ["AUDIO", "TEXT"]
+        }
       })
     }
   );
@@ -3696,7 +3701,6 @@ async function generateGeminiMusic(prompt) {
 
   return extractGeminiMusicResult(data);
 }
-
 async function makeVideoFromWorkerViaHttp({ inputBuffer, prompt }) {
   if (!WORKER_MAKE_VIDEO_URL) {
     throw new Error("WORKER_MAKE_VIDEO_URL is not set");
@@ -4225,7 +4229,7 @@ async function handleMusicRequest(update, target, userText, userId = target.id) 
     return;
   }
 
-  const result = await generateGeminiMusic(prompt);
+  const result = await runMusicGemini(() => generateGeminiMusic(prompt));
 
   await sendMaxAudio(
     target,
@@ -5000,7 +5004,7 @@ async function handleYooKassaWebhook(req, res) {
       [
         "✅ **Оплата прошла. Доступ к созданию музыки открыт.**",
         "",
-        "Теперь отправьте описание трека.",
+        "Теперь нажмите в меню «🎵 Создать музыку» ещё раз или сразу отправьте описание трека.",
         "",
         "Я создам **MP3-трек на 30 секунд** через Lyria 3 Clip.",
         "",
