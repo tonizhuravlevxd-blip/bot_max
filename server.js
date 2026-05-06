@@ -32,6 +32,19 @@ const PRODUCT_CARD_PRICE_RUB = process.env.PRODUCT_CARD_PRICE_RUB || "79.00";
 const PRODUCT_CARD_PRODUCT_CODE = "product_card";
 const PRODUCT_CARD_IMAGES_COUNT = Number(process.env.PRODUCT_CARD_IMAGES_COUNT || 3);
 
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || "";
+const GEMINI_API_BASE =
+  process.env.GEMINI_API_BASE || "https://generativelanguage.googleapis.com/v1beta";
+
+const GEMINI_LYRIA_MODEL =
+  process.env.GEMINI_LYRIA_MODEL || "lyria-3-clip-preview";
+
+const MUSIC_PRICE_RUB = process.env.MUSIC_PRICE_RUB || "99.00";
+const MUSIC_PRODUCT_CODE = "music_track";
+
+const MENU_CREATE_MUSIC_PAYLOAD = "menu_create_music";
+const IMAGE_MODE_MUSIC = "music";
+
 const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || "";
 const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || "";
 const YOOKASSA_API_BASE = process.env.YOOKASSA_API_BASE || "https://api.yookassa.ru/v3";
@@ -358,6 +371,22 @@ async function initPremiumDb() {
 await dbPool.query(`
   CREATE INDEX IF NOT EXISTS idx_max_bot_product_card_credits_user_bot
   ON max_bot_product_card_credits (user_id, bot_key)
+`);
+
+  await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS max_bot_music_credits (
+    user_id TEXT NOT NULL,
+    bot_key TEXT NOT NULL,
+    credits INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, bot_key)
+  )
+`);
+
+await dbPool.query(`
+  CREATE INDEX IF NOT EXISTS idx_max_bot_music_credits_user_bot
+  ON max_bot_music_credits (user_id, bot_key)
 `);
 
   await dbPool.query(`
@@ -1053,6 +1082,73 @@ async function consumeProductCardCredit(userId) {
   };
 }
 
+async function getMusicCredits(userId) {
+  if (!dbPool) return 0;
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      SELECT credits
+      FROM max_bot_music_credits
+      WHERE user_id = $1 AND bot_key = $2
+      LIMIT 1
+    `,
+    [key, BOT_KEY]
+  );
+
+  return Number(result.rows[0]?.credits || 0);
+}
+
+async function addMusicCredit(userId, credits = 1) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for music credits");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      INSERT INTO max_bot_music_credits (user_id, bot_key, credits)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (user_id, bot_key)
+      DO UPDATE SET
+        credits = max_bot_music_credits.credits + EXCLUDED.credits,
+        updated_at = NOW()
+      RETURNING credits
+    `,
+    [key, BOT_KEY, credits]
+  );
+
+  return Number(result.rows[0]?.credits || 0);
+}
+
+async function consumeMusicCredit(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for music credits");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      UPDATE max_bot_music_credits
+      SET credits = credits - 1,
+          updated_at = NOW()
+      WHERE user_id = $1
+        AND bot_key = $2
+        AND credits > 0
+      RETURNING credits
+    `,
+    [key, BOT_KEY]
+  );
+
+  return {
+    consumed: Boolean(result.rows.length),
+    creditsLeft: Number(result.rows[0]?.credits || 0)
+  };
+}
+
 // Проверяем, достигнут ли лимит по типу
 async function isRequestLimitReached(userId, type, limit) {
   const counts = await getUserRequestCounts(userId);
@@ -1133,6 +1229,7 @@ const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS |
 
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
+if (!GEMINI_API_KEY) console.warn("GEMINI_API_KEY is not set");
 
 const IMAGE_COMMAND_RE =
   /^\s*\/(?:img|image|photo|фото|картинка|изображение)(?=$|[\s:—-])/iu;
@@ -1636,6 +1733,107 @@ async function createYooKassaProductCardPayment(userId) {
   return payment;
 }
 
+async function createYooKassaMusicPayment(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for music payments");
+  }
+
+  if (!APP_PUBLIC_URL) {
+    throw new Error("APP_PUBLIC_URL is not set");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const price = Number(MUSIC_PRICE_RUB || 99);
+  const priceValue = price.toFixed(2);
+
+  const description = "Создание музыки AI";
+
+  const receipt = {
+    customer: {
+      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
+    },
+    items: [
+      {
+        description,
+        quantity: "1.00",
+        amount: {
+          value: priceValue,
+          currency: "RUB"
+        },
+        vat_code: YOOKASSA_VAT_CODE,
+        payment_mode: "full_payment",
+        payment_subject: "service"
+      }
+    ]
+  };
+
+  if (YOOKASSA_TAX_SYSTEM_CODE) {
+    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
+  }
+
+  const payment = await yookassaRequest("/payments", {
+    method: "POST",
+    idempotenceKey: crypto.randomUUID(),
+    body: {
+      amount: {
+        value: priceValue,
+        currency: "RUB"
+      },
+      confirmation: {
+        type: "redirect",
+        return_url: `${APP_PUBLIC_URL}/music/return?user_id=${encodeURIComponent(key)}`
+      },
+      capture: true,
+      description: `${description} для user ${key}`,
+      metadata: {
+        user_id: key,
+        bot_key: BOT_KEY,
+        product: MUSIC_PRODUCT_CODE,
+        type: MUSIC_PRODUCT_CODE
+      },
+      receipt
+    }
+  });
+
+  if (!payment?.id) {
+    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
+  }
+
+  await dbPool.query(
+    `
+      INSERT INTO max_bot_premium_payments (
+        payment_id,
+        user_id,
+        bot_key,
+        status,
+        amount,
+        currency,
+        raw
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      ON CONFLICT (payment_id)
+      DO UPDATE SET
+        status = EXCLUDED.status,
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        raw = EXCLUDED.raw,
+        updated_at = NOW()
+    `,
+    [
+      String(payment.id),
+      key,
+      BOT_KEY,
+      String(payment.status || "pending"),
+      String(payment.amount?.value || priceValue),
+      String(payment.amount?.currency || "RUB"),
+      JSON.stringify(payment)
+    ]
+  );
+
+  return payment;
+}
+
 async function getYooKassaPayment(paymentId) {
   return yookassaRequest(`/payments/${encodeURIComponent(paymentId)}`, {
     method: "GET"
@@ -1871,6 +2069,115 @@ async function applyProductCardPayment(payment) {
   }
 }
 
+async function applyMusicPayment(payment) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for music payments");
+  }
+
+  const paymentId = String(payment?.id || "").trim();
+  const status = String(payment?.status || "").trim();
+  const paid = payment?.paid === true;
+  const amountValue = String(payment?.amount?.value || "");
+  const currency = String(payment?.amount?.currency || "");
+  const metadata = payment?.metadata || {};
+
+  const userId = String(metadata.user_id || "").trim();
+  const botKey = String(metadata.bot_key || "").trim();
+  const product = String(metadata.product || "").trim();
+
+  if (!paymentId || status !== "succeeded" || !paid) {
+    return { granted: false, reason: "payment_not_succeeded" };
+  }
+
+  if (!userId || botKey !== BOT_KEY || product !== MUSIC_PRODUCT_CODE) {
+    return { granted: false, reason: "metadata_mismatch" };
+  }
+
+  if (currency !== "RUB" || Number(amountValue) < Number(MUSIC_PRICE_RUB)) {
+    return { granted: false, reason: "amount_mismatch" };
+  }
+
+  const client = await dbPool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingPayment = await client.query(
+      `
+        SELECT status
+        FROM max_bot_premium_payments
+        WHERE payment_id = $1
+        FOR UPDATE
+      `,
+      [paymentId]
+    );
+
+    const previousStatus = String(existingPayment.rows[0]?.status || "");
+
+    await client.query(
+      `
+        INSERT INTO max_bot_premium_payments (
+          payment_id,
+          user_id,
+          bot_key,
+          status,
+          amount,
+          currency,
+          raw
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        ON CONFLICT (payment_id)
+        DO UPDATE SET
+          status = EXCLUDED.status,
+          amount = EXCLUDED.amount,
+          currency = EXCLUDED.currency,
+          raw = EXCLUDED.raw,
+          updated_at = NOW()
+      `,
+      [
+        paymentId,
+        userId,
+        BOT_KEY,
+        status,
+        amountValue,
+        currency,
+        JSON.stringify(payment)
+      ]
+    );
+
+    if (previousStatus === "succeeded") {
+      await client.query("COMMIT");
+      return { granted: false, reason: "already_granted", userId };
+    }
+
+    const creditResult = await client.query(
+      `
+        INSERT INTO max_bot_music_credits (user_id, bot_key, credits)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (user_id, bot_key)
+        DO UPDATE SET
+          credits = max_bot_music_credits.credits + 1,
+          updated_at = NOW()
+        RETURNING credits
+      `,
+      [userId, BOT_KEY]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      granted: true,
+      userId,
+      credits: Number(creditResult.rows[0]?.credits || 0)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function answerMaxCallback(callbackId, notification = "") {
   if (!callbackId) return false;
 
@@ -1971,8 +2278,15 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🛍️ Создать карточку товара — 79 ₽",
+        text: "🛍️ Создать карточку товара",
         payload: MENU_PRODUCT_CARD_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
+        text: "🎵 Создать музыку",
+        payload: MENU_CREATE_MUSIC_PAYLOAD
       }
     ],
     [
@@ -2034,6 +2348,83 @@ async function sendCreatePhotoHelp(target) {
   return sendMaxMessageWithAttachments(target, text, attachments);
 }
 
+async function sendMusicInfo(target, userId) {
+  const credits = await getMusicCredits(userId);
+  const buyUrl = buildMusicBuyUrl(userId);
+
+  if (credits > 0) {
+    setUserImageMode(userId, IMAGE_MODE_MUSIC);
+
+    return sendMaxMessageWithAttachments(
+      target,
+      [
+        "🎵 **Режим создания музыки включён.**",
+        "",
+        `У вас доступно оплаченных треков: **${credits}**.`,
+        "",
+        "Теперь отправьте описание музыки.",
+        "",
+        "Пример:",
+        "`Создай 30-секундный энергичный поп-трек для рекламы замороженного йогурта, летнее настроение, мягкий женский вокал, припев, современный бит`",
+        "",
+        "Лучше писать: жанр, настроение, инструменты, вокал или без вокала, где будет использоваться трек."
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: buildBackButtonKeyboard()
+          }
+        }
+      ]
+    );
+  }
+
+  let text =
+    "🎵 **Создать музыку AI**\n\n" +
+    `Стоимость: **${Number(MUSIC_PRICE_RUB).toFixed(0)} ₽** за один трек.\n\n` +
+    "После оплаты вы получите **1 кредит** и сможете создать **MP3-трек на 30 секунд** через Lyria 3 Clip.\n\n" +
+    "Можно сделать:\n" +
+    "• музыку для рекламы;\n" +
+    "• джингл;\n" +
+    "• фон для Reels / Shorts;\n" +
+    "• инструментал;\n" +
+    "• трек с вокалом и текстом.";
+
+  if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY || !GEMINI_API_KEY) {
+    text += "\n\n⚠️ Оплата или Gemini API пока не настроены. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY и GEMINI_API_KEY.";
+  }
+
+  const buttons = [];
+
+  if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY && GEMINI_API_KEY) {
+    buttons.push([
+      {
+        type: "link",
+        text: `💳 Купить музыку — ${Number(MUSIC_PRICE_RUB).toFixed(0)} ₽`,
+        url: buyUrl
+      }
+    ]);
+  }
+
+  buttons.push([
+    {
+      type: "callback",
+      text: "⬅️ Назад к меню",
+      payload: MENU_BACK_PAYLOAD
+    }
+  ]);
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons
+      }
+    }
+  ]);
+}
+
 async function sendRestorationPhotoHelp(target) {
   const text =
     "🛠️ **Реставрация фото**\n\n" +
@@ -2072,6 +2463,10 @@ async function sendCreateVideoHelp(target) {
   return sendMaxMessageWithAttachments(target, text, attachments);
 }
 
+function isMusicMode(userId) {
+  return getUserImageMode(userId) === IMAGE_MODE_MUSIC;
+}
+
 function buildPremiumBuyUrl(userId) {
   if (!APP_PUBLIC_URL) return "";
 
@@ -2085,6 +2480,15 @@ function buildProductCardBuyUrl(userId) {
   if (!APP_PUBLIC_URL) return "";
 
   const url = new URL(`${APP_PUBLIC_URL}/product-card/buy`);
+  url.searchParams.set("user_id", String(userId || ""));
+
+  return url.toString();
+}
+
+function buildMusicBuyUrl(userId) {
+  if (!APP_PUBLIC_URL) return "";
+
+  const url = new URL(`${APP_PUBLIC_URL}/music/buy`);
   url.searchParams.set("user_id", String(userId || ""));
 
   return url.toString();
@@ -3216,6 +3620,83 @@ async function sendMaxImage(target, text, imageBuffer) {
   throw lastError;
 }
 
+function extractGeminiMusicResult(data) {
+  const parts = data?.candidates?.[0]?.content?.parts || [];
+
+  let audioBase64 = "";
+  let mimeType = "audio/mpeg";
+  const textParts = [];
+
+  for (const part of parts) {
+    if (part?.text) {
+      textParts.push(String(part.text));
+    }
+
+    const inlineData = part?.inlineData || part?.inline_data;
+
+    if (inlineData?.data) {
+      audioBase64 = String(inlineData.data);
+      mimeType = String(inlineData.mimeType || inlineData.mime_type || "audio/mpeg");
+    }
+  }
+
+  if (!audioBase64) {
+    throw new Error(`Gemini Lyria did not return audio: ${JSON.stringify(data).slice(0, 1000)}`);
+  }
+
+  return {
+    audioBuffer: Buffer.from(audioBase64, "base64"),
+    mimeType,
+    text: textParts.join("\n").trim()
+  };
+}
+
+async function generateGeminiMusic(prompt) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_API_KEY is not set");
+  }
+
+  const cleanPrompt = String(prompt || "").trim();
+
+  const finalPrompt = [
+    "Create a 30-second music track.",
+    "Output must be suitable for use as original AI-generated background music.",
+    "Do not imitate any specific real artist or copyrighted song.",
+    "",
+    cleanPrompt
+  ].join("\n");
+
+  const response = await fetch(
+    `${GEMINI_API_BASE}/models/${encodeURIComponent(GEMINI_LYRIA_MODEL)}:generateContent`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": GEMINI_API_KEY
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            parts: [
+              {
+                text: finalPrompt
+              }
+            ]
+          }
+        ]
+      })
+    }
+  );
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(`Gemini Lyria API ${response.status}: ${JSON.stringify(data)}`);
+  }
+
+  return extractGeminiMusicResult(data);
+}
+
 async function makeVideoFromWorkerViaHttp({ inputBuffer, prompt }) {
   if (!WORKER_MAKE_VIDEO_URL) {
     throw new Error("WORKER_MAKE_VIDEO_URL is not set");
@@ -3332,6 +3813,117 @@ async function sendMaxVideo(target, text, videoBuffer) {
   throw lastError;
 }
 
+function extensionFromAudioMime(mime) {
+  const value = String(mime || "").toLowerCase();
+
+  if (value.includes("wav")) return "wav";
+  if (value.includes("m4a")) return "m4a";
+  if (value.includes("ogg")) return "ogg";
+
+  return "mp3";
+}
+
+async function uploadAudioToMaxAndGetToken(audioBuffer, mime = "audio/mpeg") {
+  if (!audioBuffer || !audioBuffer.length) {
+    throw new Error("Audio buffer is empty");
+  }
+
+  const uploadInfo = await maxRequest("/uploads", {
+    method: "POST",
+    query: { type: "audio" }
+  });
+
+  const uploadUrl = uploadInfo?.url || uploadInfo?.upload_url;
+
+  if (!uploadUrl) {
+    throw new Error(`MAX /uploads(type=audio) returned no url: ${JSON.stringify(uploadInfo)}`);
+  }
+
+  let token = uploadInfo?.token;
+
+  const ext = extensionFromAudioMime(mime);
+  const form = new FormData();
+
+  form.append(
+    "data",
+    new Blob([audioBuffer], { type: mime || "audio/mpeg" }),
+    `lyria-music.${ext}`
+  );
+
+  const resp = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: MAX_BOT_TOKEN
+    },
+    body: form
+  });
+
+  const bodyText = await resp.text();
+
+  if (!resp.ok) {
+    throw new Error(`MAX audio upload step2 failed ${resp.status}: ${bodyText?.slice(0, 500)}`);
+  }
+
+  if (!token) {
+    try {
+      const json = JSON.parse(bodyText);
+      token = json?.token || json?.retval;
+    } catch {}
+
+    if (!token) {
+      const m = String(bodyText || "").match(/<retval>\s*([\s\S]*?)\s*<\/retval>/i);
+      if (m?.[1]) token = m[1];
+    }
+  }
+
+  if (!token) {
+    throw new Error(
+      `MAX audio upload no token. step1=${JSON.stringify(uploadInfo)} step2=${bodyText}`
+    );
+  }
+
+  return String(token).trim();
+}
+
+async function sendMaxAudio(target, text, audioBuffer, mime = "audio/mpeg") {
+  const token = await uploadAudioToMaxAndGetToken(audioBuffer, mime);
+
+  const attachments = [
+    {
+      type: "audio",
+      payload: { token }
+    },
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildBackButtonKeyboard()
+      }
+    }
+  ];
+
+  const retries = Number(process.env.AUDIO_SEND_RETRIES || 5);
+  const baseDelayMs = Number(process.env.AUDIO_SEND_RETRY_DELAY_MS || 1200);
+
+  let lastError;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      await sleep(baseDelayMs * (attempt + 1));
+      await sendMaxMessageWithAttachments(target, text || null, attachments);
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = String(error?.message || "");
+
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 function makeImageCaption(prompt, edited) {
   const safePrompt = String(prompt || "").slice(0, 1000);
 
@@ -3350,6 +3942,10 @@ function safeUserError(error) {
   if (/OpenAI/i.test(message)) {
     return "Не получилось получить ответ от OpenAI. Проверьте модель, ключ API и лимиты аккаунта.";
   }
+
+  if (/Gemini|Lyria|generativelanguage/i.test(message)) {
+  return "Не получилось создать музыку через Gemini/Lyria. Проверьте GEMINI_API_KEY, доступ к модели, биллинг и лимиты аккаунта.";
+}
 
   if (/MAX/i.test(message)) {
     return "Не получилось отправить ответ в MAX. Проверьте токен, webhook и права бота.";
@@ -3605,6 +4201,64 @@ async function handleProductCardRequest(update, target, userText, incomingImageU
   );
 }
 
+async function handleMusicRequest(update, target, userText, userId = target.id) {
+  const prompt = String(userText || "").trim();
+
+  if (!prompt) {
+    await sendMaxMessage(
+      target,
+      [
+        "🎵 Отправьте описание музыки.",
+        "",
+        "Пример:",
+        "`Создай 30-секундный современный рекламный трек для бренда косметики, премиальный вайб, мягкий женский вокал, поп-электроника, чистый припев`"
+      ].join("\n")
+    );
+    return;
+  }
+
+  const credits = await getMusicCredits(userId);
+
+  if (credits <= 0) {
+    clearUserImageMode(userId);
+    await sendMusicInfo(target, userId);
+    return;
+  }
+
+  const result = await generateGeminiMusic(prompt);
+
+  await sendMaxAudio(
+    target,
+    [
+      "🎵 **Готово. Создал музыку на 30 секунд.**",
+      "",
+      `Промт: ${prompt.slice(0, 700)}`,
+      result.text ? `\n\nОписание от Lyria:\n${result.text.slice(0, 1000)}` : ""
+    ].join("\n"),
+    result.audioBuffer,
+    result.mimeType
+  );
+
+  const consumeResult = await consumeMusicCredit(userId);
+
+  clearUserImageMode(userId);
+
+  if (!consumeResult.consumed) {
+    console.warn(`Music credit was not consumed for user ${userId}`);
+  }
+
+  await sendMaxMessage(
+    target,
+    [
+      "✅ **Трек создан.**",
+      "",
+      `Осталось оплаченных треков: **${consumeResult.creditsLeft || 0}**.`,
+      "",
+      "Для нового трека нажмите кнопку «Создать музыку» в меню и купите ещё один кредит."
+    ].join("\n")
+  );
+}
+
 async function handleVideoRequest(update, target, userText, incomingImageUrl, userId = target.id) {
   const prompt = String(userText || "").trim();
 
@@ -3811,6 +4465,13 @@ async function handleUpdate(update) {
         return;
       }
 
+      if (callbackPayload === MENU_CREATE_MUSIC_PAYLOAD) {
+        clearUserImageMode(userId);
+
+        await sendMusicInfo(target, userId);
+        return;
+      }
+
       // 5) Меню: Отключить лимиты / Premium
       if (callbackPayload === MENU_PREMIUM_PAYLOAD) {
         clearUserImageMode(userId);
@@ -3965,6 +4626,47 @@ if (productCardModeActive) {
 
   return;
 }
+    const musicModeActive = isMusicMode(userId);
+
+if (musicModeActive) {
+  if (!userText) {
+    await sendMaxMessage(
+      target,
+      [
+        "🎵 Режим создания музыки включён.",
+        "",
+        "Отправьте описание трека.",
+        "",
+        "Пример:",
+        "`30-секундный энергичный трек для рекламы кафе, летний вайб, поп, гитара, лёгкий вокал`"
+      ].join("\n")
+    );
+    return;
+  }
+
+  if (isUserBusy(userId)) {
+    await sendBusyWarningIfNeeded(target, userId, firstName);
+    return;
+  }
+
+  lockUserProcessing(userId);
+  processingLocked = true;
+
+  status = await startDynamicStatus(target, "🎵 Музыка создаётся");
+
+  await handleMusicRequest(
+    update,
+    target,
+    userText,
+    userId
+  );
+
+  await status.stop();
+  status = null;
+
+  return;
+}
+    
 
 
     if (!userText && incomingImageUrl) {
@@ -4158,6 +4860,46 @@ app.get("/product-card/return", (req, res) => {
     `);
 });
 
+app.get("/music/buy", async (req, res) => {
+  try {
+    const userId = String(req.query.user_id || "").trim();
+
+    if (!isValidUserIdForBroadcast(userId)) {
+      res.status(400).type("text/plain").send("Некорректный user_id.");
+      return;
+    }
+
+    const payment = await createYooKassaMusicPayment(userId);
+    const confirmationUrl = payment?.confirmation?.confirmation_url;
+
+    if (!confirmationUrl) {
+      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
+    }
+
+    res.redirect(302, confirmationUrl);
+  } catch (error) {
+    console.error("Music payment create failed:", error);
+    res
+      .status(500)
+      .type("text/plain")
+      .send("Не удалось создать платеж за музыку. Вернитесь в бота и попробуйте позже.");
+  }
+});
+
+app.get("/music/return", (req, res) => {
+  res
+    .status(200)
+    .type("text/html; charset=utf-8")
+    .send(`
+      <html>
+        <body style="font-family: Arial, sans-serif; padding: 24px;">
+          <h2>Спасибо за оплату</h2>
+          <p>Если платеж прошел успешно, доступ к созданию музыки будет активирован автоматически. Вернитесь в бот.</p>
+        </body>
+      </html>
+    `);
+});
+
 async function handleYooKassaWebhook(req, res) {
   // YooKassa нужно быстро получить HTTP 200.
   res.status(200).json({ ok: true });
@@ -4241,6 +4983,37 @@ async function handleYooKassaWebhook(req, res) {
 
         return;
       }
+
+      if (product === MUSIC_PRODUCT_CODE) {
+  const result = await applyMusicPayment(payment);
+
+  console.log("Music payment apply result:", result);
+
+  if (result.granted && result.userId) {
+    setUserImageMode(result.userId, IMAGE_MODE_MUSIC);
+
+    await sendMaxMessage(
+      {
+        type: "user_id",
+        id: result.userId
+      },
+      [
+        "✅ **Оплата прошла. Доступ к созданию музыки открыт.**",
+        "",
+        "Теперь отправьте описание трека.",
+        "",
+        "Я создам **MP3-трек на 30 секунд** через Lyria 3 Clip.",
+        "",
+        "Пример:",
+        "`Создай 30-секундный энергичный поп-трек для рекламы frozen yogurt, летнее настроение, мягкий вокал, современный бит`"
+      ].join("\n")
+    ).catch((error) => {
+      console.warn("Failed to send music success message:", error?.message || error);
+    });
+  }
+
+  return;
+}
 
       console.warn("Unknown YooKassa product:", {
         paymentId,
