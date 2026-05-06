@@ -2280,7 +2280,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🛍️ Создать карточку товара",
+        text: "🛍️ Создать карточку товара WB/Ozon",
         payload: MENU_PRODUCT_CARD_PAYLOAD
       }
     ],
