@@ -46,6 +46,16 @@ const MUSIC_PRODUCT_CODE = "music_track";
 const MENU_CREATE_MUSIC_PAYLOAD = "menu_create_music";
 const IMAGE_MODE_MUSIC = "music";
 
+const FAST_CALLBACK_PAYLOADS = new Set([
+  MENU_CREATE_PHOTO_PAYLOAD,
+  MENU_RESTORE_PHOTO_PAYLOAD,
+  MENU_CREATE_VIDEO_PAYLOAD,
+  MENU_PRODUCT_CARD_PAYLOAD,
+  MENU_CREATE_MUSIC_PAYLOAD,
+  MENU_PREMIUM_PAYLOAD,
+  MENU_BACK_PAYLOAD
+]);
+
 const FAL_KEY = process.env.FAL_KEY || "";
 
 fal.config({
@@ -175,6 +185,7 @@ const subscriptionVerifiedUsers = new Set();
 const userSubscriptionMessages = new Map();
 
 const userRequestCounts = {};
+
 const userImageModes = new Map();
 
 function setUserImageMode(userId, mode) {
@@ -2672,6 +2683,42 @@ async function sendMaxVideoToken(target, text, token) {
   throw lastError;
 }
 
+async function sendMaxVideoTokenWithAttachments(target, text, token, extraAttachments = []) {
+  const attachments = [
+    {
+      type: "video",
+      payload: { token }
+    },
+    ...extraAttachments
+  ];
+
+  const retries = Number(process.env.VIDEO_EXAMPLE_SEND_RETRIES || 4);
+  const baseDelayMs = Number(process.env.VIDEO_EXAMPLE_SEND_RETRY_DELAY_MS || 200);
+
+  let lastError;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      if (attempt > 0) {
+        await sleep(baseDelayMs * attempt);
+      }
+
+      await sendMaxMessageWithAttachments(target, text || null, attachments);
+      return true;
+    } catch (error) {
+      lastError = error;
+
+      const message = String(error?.message || "");
+
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 async function sendVideoExampleToMax(target) {
   try {
     let token = await getVideoExampleMaxToken();
@@ -2901,10 +2948,6 @@ async function sendCreateVideoHelp(target, userId) {
   const credits = await getVideoCredits(userId);
   const buyUrl = buildVideoBuyUrl(userId);
 
-  if (credits <= 0) {
-    await sendVideoExampleToMax(target);
-  }
-
   if (credits > 0) {
     setUserImageMode(userId, IMAGE_MODE_VIDEO);
 
@@ -2967,13 +3010,26 @@ async function sendCreateVideoHelp(target, userId) {
     }
   ]);
 
-  return sendMaxMessageWithAttachments(target, text, [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons
-      }
+  const keyboardAttachment = {
+    type: "inline_keyboard",
+    payload: {
+      buttons
     }
+  };
+
+  const token = await getVideoExampleMaxToken().catch((error) => {
+    console.warn("Video example token failed:", error?.message || error);
+    return "";
+  });
+
+  if (token) {
+    return sendMaxVideoTokenWithAttachments(target, text, token, [
+      keyboardAttachment
+    ]);
+  }
+
+  return sendMaxMessageWithAttachments(target, text, [
+    keyboardAttachment
   ]);
 }
 
@@ -5130,13 +5186,18 @@ async function handleUpdate(update) {
       Boolean(callbackPayload);
 
     // Отдельная обработка callback-кнопок
-    if (isCallbackUpdate) {
-      console.log("Callback received:", {
-        callbackPayload,
-        callbackId,
-        userId,
-        target
-      });
+if (isCallbackUpdate) {
+  console.log("Callback received:", {
+    callbackPayload,
+    userId,
+    target
+  });
+
+  if (callbackId && FAST_CALLBACK_PAYLOADS.has(callbackPayload)) {
+    answerMaxCallback(callbackId, "Открываю...").catch((error) => {
+      console.warn("Fast callback answer failed:", error?.message || error);
+    });
+  }
 
       // 1) Проверка подписки по кнопке "Я подписан(а)"
       if (isSubscriptionCheckPayload(callbackPayload)) {
@@ -5200,10 +5261,6 @@ async function handleUpdate(update) {
 
       // 4) Меню: Оживить фото (демо)
 if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
-  if (callbackId) {
-    await answerMaxCallback(callbackId, "🎬 Открываю оживление фото...");
-  }
-
   clearUserImageMode(userId);
 
   await sendCreateVideoHelp(target, userId);
