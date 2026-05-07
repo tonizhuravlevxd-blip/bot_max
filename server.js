@@ -148,18 +148,7 @@ const MENU_RESTORE_PHOTO_PAYLOAD = "menu_restore_photo";
 const MENU_PREMIUM_PAYLOAD = "menu_premium";
 const MENU_BACK_PAYLOAD = "menu_back";
 const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
-const SILENT_CALLBACK_NOTIFICATION = "\u2060";
 
-// Быстрый ответ на обычные callback-кнопки меню
-const FAST_CALLBACK_PAYLOADS = new Set([
-  MENU_CREATE_PHOTO_PAYLOAD,
-  MENU_RESTORE_PHOTO_PAYLOAD,
-  MENU_CREATE_VIDEO_PAYLOAD,
-  MENU_PRODUCT_CARD_PAYLOAD,
-  MENU_CREATE_MUSIC_PAYLOAD,
-  MENU_PREMIUM_PAYLOAD,
-  MENU_BACK_PAYLOAD
-]);
 
 const IMAGE_MODE_RESTORATION = "restoration";
 const IMAGE_MODE_PRODUCT_CARD = "product_card";
@@ -5196,11 +5185,6 @@ if (isCallbackUpdate) {
     target
   });
 
-if (callbackId && FAST_CALLBACK_PAYLOADS.has(callbackPayload)) {
-  answerMaxCallback(callbackId, SILENT_CALLBACK_NOTIFICATION).catch((error) => {
-    console.warn("Fast callback answer failed:", error?.message || error);
-  });
-}
 
       // 1) Проверка подписки по кнопке "Я подписан(а)"
       if (isSubscriptionCheckPayload(callbackPayload)) {
