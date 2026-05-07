@@ -2628,7 +2628,7 @@ async function getVideoExampleMaxToken({ force = false } = {}) {
 
     cachedVideoExampleToken = token;
 
-    console.log("VIDEO_EXAMPLE_MAX_TOKEN=", token);
+    console.log(`VIDEO_EXAMPLE_MAX_TOKEN=${token}`);
 
     return token;
   })();
