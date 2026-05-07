@@ -5195,11 +5195,11 @@ if (isCallbackUpdate) {
     target
   });
 
-  if (callbackId && FAST_CALLBACK_PAYLOADS.has(callbackPayload)) {
-    answerMaxCallback(callbackId, "Открываю...").catch((error) => {
-      console.warn("Fast callback answer failed:", error?.message || error);
-    });
-  }
+if (callbackId && FAST_CALLBACK_PAYLOADS.has(callbackPayload)) {
+  answerMaxCallback(callbackId).catch((error) => {
+    console.warn("Fast callback answer failed:", error?.message || error);
+  });
+}
 
       // 1) Проверка подписки по кнопке "Я подписан(а)"
       if (isSubscriptionCheckPayload(callbackPayload)) {
