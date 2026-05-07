@@ -62,6 +62,10 @@ const FAL_QUEUE_POLL_INTERVAL_MS = Number(process.env.FAL_QUEUE_POLL_INTERVAL_MS
 const VIDEO_PRICE_RUB = process.env.VIDEO_PRICE_RUB || "59.00";
 const VIDEO_PRODUCT_CODE = "photo_animation_video";
 const VIDEO_EXAMPLE_URL = process.env.VIDEO_EXAMPLE_URL || "https://v3b.fal.media/files/b/0a994a93/nP39rGAe_VTIOtxt4ZoPB_video.mp4";
+const VIDEO_EXAMPLE_MAX_TOKEN = process.env.VIDEO_EXAMPLE_MAX_TOKEN || "";
+
+let cachedVideoExampleToken = VIDEO_EXAMPLE_MAX_TOKEN;
+let videoExampleTokenPromise = null;
 
 const IMAGE_MODE_VIDEO = "video_animation";
 
@@ -2605,6 +2609,102 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
   });
 }
 
+async function getVideoExampleMaxToken({ force = false } = {}) {
+  if (!VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
+    return "";
+  }
+
+  if (!force && cachedVideoExampleToken) {
+    return cachedVideoExampleToken;
+  }
+
+  if (!force && videoExampleTokenPromise) {
+    return videoExampleTokenPromise;
+  }
+
+  videoExampleTokenPromise = (async () => {
+    const videoBuffer = await downloadBufferFromUrl(VIDEO_EXAMPLE_URL, "video/");
+    const token = await uploadVideoToMaxAndGetToken(videoBuffer);
+
+    cachedVideoExampleToken = token;
+
+    console.log("VIDEO_EXAMPLE_MAX_TOKEN=", token);
+
+    return token;
+  })();
+
+  try {
+    return await videoExampleTokenPromise;
+  } finally {
+    videoExampleTokenPromise = null;
+  }
+}
+
+async function sendMaxVideoToken(target, text, token) {
+  const attachments = [
+    {
+      type: "video",
+      payload: { token }
+    }
+  ];
+
+  const retries = Number(process.env.VIDEO_EXAMPLE_SEND_RETRIES || 4);
+  const baseDelayMs = Number(process.env.VIDEO_EXAMPLE_SEND_RETRY_DELAY_MS || 900);
+
+  let lastError;
+
+  for (let attempt = 0; attempt < retries; attempt += 1) {
+    try {
+      await sleep(baseDelayMs * (attempt + 1));
+      await sendMaxMessageWithAttachments(target, text || null, attachments);
+      return true;
+    } catch (error) {
+      lastError = error;
+
+      const message = String(error?.message || "");
+
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) {
+        throw error;
+      }
+    }
+  }
+
+  throw lastError;
+}
+
+async function sendVideoExampleToMax(target) {
+  try {
+    let token = await getVideoExampleMaxToken();
+
+    if (!token) {
+      return false;
+    }
+
+    try {
+      await sendMaxVideoToken(target, "🎞️ **Пример результата**", token);
+      return true;
+    } catch (error) {
+      console.warn(
+        "Cached video example token failed, trying fresh upload:",
+        error?.message || error
+      );
+
+      if (!VIDEO_EXAMPLE_URL) {
+        throw error;
+      }
+
+      cachedVideoExampleToken = "";
+      token = await getVideoExampleMaxToken({ force: true });
+
+      await sendMaxVideoToken(target, "🎞️ **Пример результата**", token);
+      return true;
+    }
+  } catch (error) {
+    console.warn("Failed to send video example:", error?.message || error);
+    return false;
+  }
+}
+
 function buildMainMenuButtons() {
   return [
     [
@@ -2801,6 +2901,10 @@ async function sendCreateVideoHelp(target, userId) {
   const credits = await getVideoCredits(userId);
   const buyUrl = buildVideoBuyUrl(userId);
 
+  if (credits <= 0) {
+    await sendVideoExampleToMax(target);
+  }
+
   if (credits > 0) {
     setUserImageMode(userId, IMAGE_MODE_VIDEO);
 
@@ -2838,12 +2942,6 @@ async function sendCreateVideoHelp(target, userId) {
     "• будет смотреть в камеру;\n" +
     "• мягко помашет рукой, если это возможно по фото.\n\n" +
     "После оплаты вы получите **1 видео-кредит**. Затем просто отправьте фото — текст будет проигнорирован.";
-
-  if (VIDEO_EXAMPLE_URL) {
-    text += `\n\n🎞️ Пример результата: ${VIDEO_EXAMPLE_URL}`;
-  } else {
-    text += "\n\n⚠️ VIDEO_EXAMPLE_URL пока не задан. Добавьте ссылку на пример видео в переменные окружения.";
-  }
 
   if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY || !FAL_KEY) {
     text += "\n\n⚠️ Оплата или FAL пока не настроены. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY и FAL_KEY.";
@@ -5101,12 +5199,16 @@ async function handleUpdate(update) {
       }
 
       // 4) Меню: Оживить фото (демо)
-      if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
-        clearUserImageMode(userId);
+if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
+  if (callbackId) {
+    await answerMaxCallback(callbackId, "🎬 Открываю оживление фото...");
+  }
 
-        await sendCreateVideoHelp(target, userId);
-        return;
-      }
+  clearUserImageMode(userId);
+
+  await sendCreateVideoHelp(target, userId);
+  return;
+}
 
       // 5) Меню: Создать карточку товара
       if (callbackPayload === MENU_PRODUCT_CARD_PAYLOAD) {
@@ -5860,9 +5962,18 @@ Promise.all([
   .catch((error) => {
     console.warn("DB init failed:", error?.message || error);
   })
-  .finally(() => {
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`MAX OpenAI bot is running on port ${PORT}`);
-    });
+  
+.finally(() => {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`MAX OpenAI bot is running on port ${PORT}`);
+
+    setTimeout(() => {
+      if (VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
+        getVideoExampleMaxToken().catch((error) => {
+          console.warn("Video example warmup failed:", error?.message || error);
+        });
+      }
+    }, 2000).unref?.();
   });
+});
   
