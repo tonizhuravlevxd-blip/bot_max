@@ -5185,6 +5185,7 @@ if (shouldRegisterBotUser(broadcastUserId)) {
   registerBotUserInDb(broadcastUserId).catch((error) => {
     console.warn("Failed to register bot user in DB:", error?.message || error);
   });
+}
 
   try {
     if (updateType === "bot_started") {
