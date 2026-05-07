@@ -177,6 +177,28 @@ const subscriptionVerifiedUsers = new Set();
 const userSubscriptionMessages = new Map();
 
 const userRequestCounts = {};
+const registeredUserCache = new Map();
+const REGISTER_USER_CACHE_TTL_MS = Number(
+  process.env.REGISTER_USER_CACHE_TTL_MS || 6 * 60 * 60 * 1000
+);
+
+function shouldRegisterBotUser(userId) {
+  const key = String(userId || "").trim();
+
+  if (!isValidUserIdForBroadcast(key)) {
+    return false;
+  }
+
+  const now = Date.now();
+  const lastRegisteredAt = registeredUserCache.get(key) || 0;
+
+  if (now - lastRegisteredAt < REGISTER_USER_CACHE_TTL_MS) {
+    return false;
+  }
+
+  registeredUserCache.set(key, now);
+  return true;
+}
 
 const userImageModes = new Map();
 
@@ -781,6 +803,16 @@ setInterval(() => {
     }
   }
 }, 10 * 60_000).unref?.();
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [userId, lastRegisteredAt] of registeredUserCache.entries()) {
+    if (now - lastRegisteredAt > REGISTER_USER_CACHE_TTL_MS * 2) {
+      registeredUserCache.delete(userId);
+    }
+  }
+}, 60 * 60 * 1000).unref?.();
 
 
 const CONTEXT_MAX_REQUESTS = Number(process.env.CONTEXT_MAX_REQUESTS || 3);
@@ -5147,8 +5179,9 @@ async function handleUpdate(update) {
   const userId = getStableUserId(update, target);
   const firstName = getUserFirstName(update);
 
-  const broadcastUserId = getRealUserIdForBroadcast(update, target);
+const broadcastUserId = getRealUserIdForBroadcast(update, target);
 
+if (shouldRegisterBotUser(broadcastUserId)) {
   registerBotUserInDb(broadcastUserId).catch((error) => {
     console.warn("Failed to register bot user in DB:", error?.message || error);
   });
