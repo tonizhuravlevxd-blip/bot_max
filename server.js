@@ -45,6 +45,44 @@ const MUSIC_PRODUCT_CODE = "music_track";
 const MENU_CREATE_MUSIC_PAYLOAD = "menu_create_music";
 const IMAGE_MODE_MUSIC = "music";
 
+const FAL_KEY = process.env.FAL_KEY || "";
+const FAL_SEEDANCE_IMAGE_TO_VIDEO_URL =
+  process.env.FAL_SEEDANCE_IMAGE_TO_VIDEO_URL ||
+  "https://queue.fal.run/fal-ai/bytedance/seedance/v1/lite/image-to-video";
+
+const FAL_QUEUE_TIMEOUT_MS = Number(process.env.FAL_QUEUE_TIMEOUT_MS || 8 * 60_000);
+const FAL_QUEUE_POLL_INTERVAL_MS = Number(process.env.FAL_QUEUE_POLL_INTERVAL_MS || 2500);
+
+const VIDEO_PRICE_RUB = process.env.VIDEO_PRICE_RUB || "59.00";
+const VIDEO_PRODUCT_CODE = "photo_animation_video";
+const VIDEO_EXAMPLE_URL = process.env.VIDEO_EXAMPLE_URL || "https://fal.ai/models/fal-ai/bytedance/seedance/v1/lite/image-to-video/playground?share=0033ef3f-ad68-44bf-8edc-e7a6b08a59c1";
+
+const IMAGE_MODE_VIDEO = "video_animation";
+
+const VIDEO_ANIMATE_PHOTO_PROMPT = `Animate this photo into a realistic video with strict identity preservation.
+
+Keep every visible person exactly the same as in the original photo:
+same face, same skin texture, same age, same proportions, same unique facial details.
+No beautification, no stylization, no face alteration.
+
+Motion:
+natural blinking, gentle breathing, very slight head movement, and a very subtle natural smile.
+The person should look directly at the viewer/camera.
+If there are visible people in the photo, they should gently and naturally wave toward the viewer/camera, as if greeting us.
+The hand wave must be small, smooth, realistic, and anatomically correct.
+Facial expression should remain calm, warm, and natural.
+
+Style:
+ultra-realistic, natural skin texture, realistic motion, portrait realism.
+
+Camera:
+fixed camera, no camera shake, shallow depth of field.
+
+Avoid:
+any facial changes, makeup, skin smoothing, exaggerated motion, strong expressions, distorted hands, distorted body proportions, looking away from the camera, AI artifacts.
+
+The final result must look like real footage of the same person from the original image, maintaining direct eye contact with the viewer, a soft natural smile, and subtle realistic waving.`;
+
 const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || "";
 const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || "";
 const YOOKASSA_API_BASE = process.env.YOOKASSA_API_BASE || "https://api.yookassa.ru/v3";
@@ -389,6 +427,21 @@ await dbPool.query(`
   ON max_bot_music_credits (user_id, bot_key)
 `);
 
+ await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS max_bot_video_credits (
+    user_id TEXT NOT NULL,
+    bot_key TEXT NOT NULL,
+    credits INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, bot_key)
+  )
+`);
+
+await dbPool.query(`
+  CREATE INDEX IF NOT EXISTS idx_max_bot_video_credits_user_bot
+  ON max_bot_video_credits (user_id, bot_key)
+`); 
   await dbPool.query(`
     CREATE INDEX IF NOT EXISTS idx_max_bot_premium_users_active
     ON max_bot_premium_users (user_id, bot_key, premium_until)
@@ -1149,6 +1202,73 @@ async function consumeMusicCredit(userId) {
   };
 }
 
+async function getVideoCredits(userId) {
+  if (!dbPool) return 0;
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      SELECT credits
+      FROM max_bot_video_credits
+      WHERE user_id = $1 AND bot_key = $2
+      LIMIT 1
+    `,
+    [key, BOT_KEY]
+  );
+
+  return Number(result.rows[0]?.credits || 0);
+}
+
+async function addVideoCredit(userId, credits = 1) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for video credits");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      INSERT INTO max_bot_video_credits (user_id, bot_key, credits)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (user_id, bot_key)
+      DO UPDATE SET
+        credits = max_bot_video_credits.credits + EXCLUDED.credits,
+        updated_at = NOW()
+      RETURNING credits
+    `,
+    [key, BOT_KEY, credits]
+  );
+
+  return Number(result.rows[0]?.credits || 0);
+}
+
+async function consumeVideoCredit(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for video credits");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      UPDATE max_bot_video_credits
+      SET credits = credits - 1,
+          updated_at = NOW()
+      WHERE user_id = $1
+        AND bot_key = $2
+        AND credits > 0
+      RETURNING credits
+    `,
+    [key, BOT_KEY]
+  );
+
+  return {
+    consumed: Boolean(result.rows.length),
+    creditsLeft: Number(result.rows[0]?.credits || 0)
+  };
+}
+
 // Проверяем, достигнут ли лимит по типу
 async function isRequestLimitReached(userId, type, limit) {
   const counts = await getUserRequestCounts(userId);
@@ -1230,6 +1350,7 @@ const STATUS_UPDATE_INTERVAL_MS = Number(process.env.STATUS_UPDATE_INTERVAL_MS |
 if (!MAX_BOT_TOKEN) console.warn("MAX_BOT_TOKEN is not set");
 if (!OPENAI_API_KEY) console.warn("OPENAI_API_KEY is not set");
 if (!GEMINI_API_KEY) console.warn("GEMINI_API_KEY is not set");
+if (!FAL_KEY) console.warn("FAL_KEY is not set");
 
 const IMAGE_COMMAND_RE =
   /^\s*\/(?:img|image|photo|фото|картинка|изображение)(?=$|[\s:—-])/iu;
@@ -1836,6 +1957,107 @@ async function createYooKassaMusicPayment(userId) {
   return payment;
 }
 
+async function createYooKassaVideoPayment(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for video payments");
+  }
+
+  if (!APP_PUBLIC_URL) {
+    throw new Error("APP_PUBLIC_URL is not set");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const price = Number(VIDEO_PRICE_RUB || 59);
+  const priceValue = price.toFixed(2);
+
+  const description = "Оживление фото AI";
+
+  const receipt = {
+    customer: {
+      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
+    },
+    items: [
+      {
+        description,
+        quantity: "1.00",
+        amount: {
+          value: priceValue,
+          currency: "RUB"
+        },
+        vat_code: YOOKASSA_VAT_CODE,
+        payment_mode: "full_payment",
+        payment_subject: "service"
+      }
+    ]
+  };
+
+  if (YOOKASSA_TAX_SYSTEM_CODE) {
+    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
+  }
+
+  const payment = await yookassaRequest("/payments", {
+    method: "POST",
+    idempotenceKey: crypto.randomUUID(),
+    body: {
+      amount: {
+        value: priceValue,
+        currency: "RUB"
+      },
+      confirmation: {
+        type: "redirect",
+        return_url: `${APP_PUBLIC_URL}/video/return?user_id=${encodeURIComponent(key)}`
+      },
+      capture: true,
+      description: `${description} для user ${key}`,
+      metadata: {
+        user_id: key,
+        bot_key: BOT_KEY,
+        product: VIDEO_PRODUCT_CODE,
+        type: VIDEO_PRODUCT_CODE
+      },
+      receipt
+    }
+  });
+
+  if (!payment?.id) {
+    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
+  }
+
+  await dbPool.query(
+    `
+      INSERT INTO max_bot_premium_payments (
+        payment_id,
+        user_id,
+        bot_key,
+        status,
+        amount,
+        currency,
+        raw
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      ON CONFLICT (payment_id)
+      DO UPDATE SET
+        status = EXCLUDED.status,
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        raw = EXCLUDED.raw,
+        updated_at = NOW()
+    `,
+    [
+      String(payment.id),
+      key,
+      BOT_KEY,
+      String(payment.status || "pending"),
+      String(payment.amount?.value || priceValue),
+      String(payment.amount?.currency || "RUB"),
+      JSON.stringify(payment)
+    ]
+  );
+
+  return payment;
+}
+
 async function getYooKassaPayment(paymentId) {
   return yookassaRequest(`/payments/${encodeURIComponent(paymentId)}`, {
     method: "GET"
@@ -2180,6 +2402,115 @@ async function applyMusicPayment(payment) {
   }
 }
 
+async function applyVideoPayment(payment) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for video payments");
+  }
+
+  const paymentId = String(payment?.id || "").trim();
+  const status = String(payment?.status || "").trim();
+  const paid = payment?.paid === true;
+  const amountValue = String(payment?.amount?.value || "");
+  const currency = String(payment?.amount?.currency || "");
+  const metadata = payment?.metadata || {};
+
+  const userId = String(metadata.user_id || "").trim();
+  const botKey = String(metadata.bot_key || "").trim();
+  const product = String(metadata.product || "").trim();
+
+  if (!paymentId || status !== "succeeded" || !paid) {
+    return { granted: false, reason: "payment_not_succeeded" };
+  }
+
+  if (!userId || botKey !== BOT_KEY || product !== VIDEO_PRODUCT_CODE) {
+    return { granted: false, reason: "metadata_mismatch" };
+  }
+
+  if (currency !== "RUB" || Number(amountValue) < Number(VIDEO_PRICE_RUB)) {
+    return { granted: false, reason: "amount_mismatch" };
+  }
+
+  const client = await dbPool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingPayment = await client.query(
+      `
+        SELECT status
+        FROM max_bot_premium_payments
+        WHERE payment_id = $1
+        FOR UPDATE
+      `,
+      [paymentId]
+    );
+
+    const previousStatus = String(existingPayment.rows[0]?.status || "");
+
+    await client.query(
+      `
+        INSERT INTO max_bot_premium_payments (
+          payment_id,
+          user_id,
+          bot_key,
+          status,
+          amount,
+          currency,
+          raw
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        ON CONFLICT (payment_id)
+        DO UPDATE SET
+          status = EXCLUDED.status,
+          amount = EXCLUDED.amount,
+          currency = EXCLUDED.currency,
+          raw = EXCLUDED.raw,
+          updated_at = NOW()
+      `,
+      [
+        paymentId,
+        userId,
+        BOT_KEY,
+        status,
+        amountValue,
+        currency,
+        JSON.stringify(payment)
+      ]
+    );
+
+    if (previousStatus === "succeeded") {
+      await client.query("COMMIT");
+      return { granted: false, reason: "already_granted", userId };
+    }
+
+    const creditResult = await client.query(
+      `
+        INSERT INTO max_bot_video_credits (user_id, bot_key, credits)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (user_id, bot_key)
+        DO UPDATE SET
+          credits = max_bot_video_credits.credits + 1,
+          updated_at = NOW()
+        RETURNING credits
+      `,
+      [userId, BOT_KEY]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      granted: true,
+      userId,
+      credits: Number(creditResult.rows[0]?.credits || 0)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function answerMaxCallback(callbackId, notification = "") {
   if (!callbackId) return false;
 
@@ -2446,23 +2777,86 @@ async function sendRestorationPhotoHelp(target) {
   return sendMaxMessageWithAttachments(target, text, attachments);
 }
 
-async function sendCreateVideoHelp(target) {
-  const text =
-    "🎬 **Оживить фото (демо)**\n\n" +
-    "1) Отправь фото.\n" +
-    "2) Напиши в сообщении, например: `оживи фото` или `создай видео`.\n" +
-    "3) Можно добавлять эффекты прямо в промт (дождь, снег, неон и т.д.).";
+async function sendCreateVideoHelp(target, userId) {
+  const credits = await getVideoCredits(userId);
+  const buyUrl = buildVideoBuyUrl(userId);
 
-  const attachments = [
+  if (credits > 0) {
+    setUserImageMode(userId, IMAGE_MODE_VIDEO);
+
+    return sendMaxMessageWithAttachments(
+      target,
+      [
+        "🎬 **Режим оживления фото включён.**",
+        "",
+        `У вас доступно оплаченных видео: **${credits}**.`,
+        "",
+        "Теперь просто отправьте **фото человека**.",
+        "",
+        "Любой текст в сообщении будет проигнорирован — бот использует встроенный промт:",
+        "человек слегка улыбается, смотрит в камеру и мягко машет рукой.",
+        "",
+        "Видео будет создано через **Seedance Lite**, длительность **5 секунд**, качество **480p**."
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: buildBackButtonKeyboard()
+          }
+        }
+      ]
+    );
+  }
+
+  let text =
+    "🎬 **Оживить фото**\n\n" +
+    `Стоимость: **${Number(VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно видео.\n\n` +
+    "Что получится:\n" +
+    "• человек сохранит лицо и внешность;\n" +
+    "• слегка улыбнётся;\n" +
+    "• будет смотреть в камеру;\n" +
+    "• мягко помашет рукой, если это возможно по фото.\n\n" +
+    "После оплаты вы получите **1 видео-кредит**. Затем просто отправьте фото — текст будет проигнорирован.";
+
+  if (VIDEO_EXAMPLE_URL) {
+    text += `\n\n🎞️ Пример результата: ${VIDEO_EXAMPLE_URL}`;
+  } else {
+    text += "\n\n⚠️ VIDEO_EXAMPLE_URL пока не задан. Добавьте ссылку на пример видео в переменные окружения.";
+  }
+
+  if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY || !FAL_KEY) {
+    text += "\n\n⚠️ Оплата или FAL пока не настроены. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY и FAL_KEY.";
+  }
+
+  const buttons = [];
+
+  if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY && FAL_KEY) {
+    buttons.push([
+      {
+        type: "link",
+        text: `💳 Купить видео — ${Number(VIDEO_PRICE_RUB).toFixed(0)} ₽`,
+        url: buyUrl
+      }
+    ]);
+  }
+
+  buttons.push([
+    {
+      type: "callback",
+      text: "⬅️ Назад к меню",
+      payload: MENU_BACK_PAYLOAD
+    }
+  ]);
+
+  return sendMaxMessageWithAttachments(target, text, [
     {
       type: "inline_keyboard",
       payload: {
-        buttons: buildBackButtonKeyboard()
+        buttons
       }
     }
-  ];
-
-  return sendMaxMessageWithAttachments(target, text, attachments);
+  ]);
 }
 
 function isMusicMode(userId) {
@@ -3777,28 +4171,144 @@ async function generateGeminiMusic(prompt) {
   return extractGeminiMusicResult(data);
 }
 
-async function makeVideoFromWorkerViaHttp({ inputBuffer, prompt }) {
-  if (!WORKER_MAKE_VIDEO_URL) {
-    throw new Error("WORKER_MAKE_VIDEO_URL is not set");
+function makeDataUriFromImage(inputImage) {
+  const mime = inputImage?.mime || "image/png";
+  const base64 = inputImage?.buffer?.toString("base64");
+
+  if (!base64) {
+    throw new Error("Input image buffer is empty");
   }
 
-  const form = new FormData();
-  // имя поля должно совпасть с тем, что ожидает python webservice: file + prompt
-  form.append("file", new Blob([inputBuffer], { type: "image/png" }), "in.png");
-  form.append("prompt", String(prompt || ""));
+  return `data:${mime};base64,${base64}`;
+}
 
-  const resp = await fetch(WORKER_MAKE_VIDEO_URL, {
-    method: "POST",
-    body: form
+async function falRequest(url, options = {}) {
+  if (!FAL_KEY) {
+    throw new Error("FAL_KEY is not set");
+  }
+
+  const headers = {
+    Authorization: `Key ${FAL_KEY}`
+  };
+
+  if (options.body !== undefined) {
+    headers["Content-Type"] = "application/json";
+  }
+
+  const response = await fetch(url, {
+    method: options.method || "GET",
+    headers,
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined
   });
 
-  if (!resp.ok) {
-    const t = await resp.text().catch(() => "");
-    throw new Error(`Worker make-video failed: ${resp.status} ${t}`);
+  const bodyText = await response.text();
+
+  let body;
+  try {
+    body = bodyText ? JSON.parse(bodyText) : null;
+  } catch {
+    body = bodyText;
   }
 
-  const ab = await resp.arrayBuffer();
-  return Buffer.from(ab); // mp4 bytes
+  if (!response.ok) {
+    const details = typeof body === "string" ? body : JSON.stringify(body);
+    throw new Error(`FAL API ${response.status}: ${details}`);
+  }
+
+  return body;
+}
+
+function extractFalVideoUrl(data) {
+  return String(
+    data?.video?.url ||
+    data?.data?.video?.url ||
+    data?.result?.video?.url ||
+    ""
+  ).trim();
+}
+
+async function downloadBufferFromUrl(url, expectedPrefix = "") {
+  const response = await fetch(url, {
+    method: "GET"
+  });
+
+  if (!response.ok) {
+    throw new Error(`File download failed ${response.status}: ${await response.text().catch(() => "")}`);
+  }
+
+  const mime = String(response.headers.get("content-type") || "").toLowerCase();
+
+  if (expectedPrefix && mime && !mime.startsWith(expectedPrefix)) {
+    console.warn(`Downloaded file has unexpected mime type: ${mime}`);
+  }
+
+  const arrayBuffer = await response.arrayBuffer();
+
+  return Buffer.from(arrayBuffer);
+}
+
+async function makeVideoFromFalSeedance({ inputImage }) {
+  const imageUrl = makeDataUriFromImage(inputImage);
+
+  const submitResult = await falRequest(FAL_SEEDANCE_IMAGE_TO_VIDEO_URL, {
+    method: "POST",
+    body: {
+      prompt: VIDEO_ANIMATE_PHOTO_PROMPT,
+      image_url: imageUrl,
+      duration: "5",
+      resolution: "480p",
+      aspect_ratio: "auto",
+      camera_fixed: true,
+      enable_safety_checker: true
+    }
+  });
+
+  let videoUrl = extractFalVideoUrl(submitResult);
+
+  if (!videoUrl) {
+    const statusUrl = String(submitResult?.status_url || "").trim();
+    const responseUrl = String(submitResult?.response_url || "").trim();
+
+    if (!statusUrl || !responseUrl) {
+      throw new Error(`FAL queue response missing status_url/response_url: ${JSON.stringify(submitResult)}`);
+    }
+
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < FAL_QUEUE_TIMEOUT_MS) {
+      await sleep(FAL_QUEUE_POLL_INTERVAL_MS);
+
+      const statusResult = await falRequest(statusUrl, {
+        method: "GET"
+      });
+
+      const status = String(statusResult?.status || "").toUpperCase();
+
+      if (["COMPLETED", "COMPLETE", "DONE", "SUCCEEDED"].includes(status)) {
+        const result = await falRequest(responseUrl, {
+          method: "GET"
+        });
+
+        videoUrl = extractFalVideoUrl(result);
+
+        if (!videoUrl) {
+          throw new Error(`FAL result has no video.url: ${JSON.stringify(result).slice(0, 1200)}`);
+        }
+
+        break;
+      }
+
+      if (["FAILED", "ERROR", "CANCELLED", "CANCELED"].includes(status)) {
+        throw new Error(`FAL generation failed: ${JSON.stringify(statusResult).slice(0, 1200)}`);
+      }
+    }
+  }
+
+  if (!videoUrl) {
+    throw new Error("FAL video generation timeout");
+  }
+
+  return downloadBufferFromUrl(videoUrl, "video/");
 }
 
 async function uploadVideoToMaxAndGetToken(videoBuffer) {
@@ -3857,6 +4367,19 @@ async function uploadVideoToMaxAndGetToken(videoBuffer) {
   }
 
   return String(token).trim();
+}
+
+function isVideoMode(userId) {
+  return getUserImageMode(userId) === IMAGE_MODE_VIDEO;
+}
+
+function buildVideoBuyUrl(userId) {
+  if (!APP_PUBLIC_URL) return "";
+
+  const url = new URL(`${APP_PUBLIC_URL}/video/buy`);
+  url.searchParams.set("user_id", String(userId || ""));
+
+  return url.toString();
 }
 
 async function sendMaxVideo(target, text, videoBuffer) {
@@ -4040,6 +4563,9 @@ function safeUserError(error) {
 
   if (/Gemini|Lyria|generativelanguage/i.test(message)) {
     return "Не получилось создать музыку через Gemini/Lyria. Проверьте GEMINI_API_KEY, доступ к модели, биллинг и лимиты аккаунта.";
+  }
+  if (/FAL|fal|Seedance|queue\.fal/i.test(message)) {
+    return "Не получилось создать видео через FAL Seedance. Проверьте FAL_KEY, баланс FAL, доступ к модели и параметры duration/resolution.";
   }
 
   if (/MAX/i.test(message)) {
@@ -4372,76 +4898,58 @@ async function handleMusicRequest(update, target, userText, userId = target.id) 
 }
 
 async function handleVideoRequest(update, target, userText, incomingImageUrl, userId = target.id) {
-  const prompt = String(userText || "").trim();
-
   if (!incomingImageUrl) {
-    await sendMaxMessage(target, "Пришлите фото и напишите: **оживи фото** или **создай видео**.");
-    return;
-  }
-
-  if (!prompt) {
-    await sendMaxMessage(target, "Фото получил. Теперь напишите промт: **оживи фото** / **создай видео**.");
-    return;
-  }
-
-  // Лимит на день по видео
-  if (await isRequestLimitReached(userId, "videos", VIDEO_REQUEST_LIMIT)) {
     await sendMaxMessage(
       target,
-      "🥱Вы достигли лимита на создание **видео** сегодня. Приходите позже и продолжайте."
+      "🎬 Режим оживления фото включён. Отправьте **фото человека**. Текст писать не нужно."
     );
     return;
   }
 
-  // Подписка после бесплатных видео
-  if (await isSubscriptionRequiredForRequest(userId, "videos")) {
-    await sendSubscriptionPrompt(
-      target,
-      userId,
-      `Вы уже создали ${VIDEO_REQUESTS_BEFORE_SUBSCRIPTION} видео бесплатно.`
-    );
+  const credits = await getVideoCredits(userId);
+
+  if (credits <= 0) {
+    clearUserImageMode(userId);
+    await sendCreateVideoHelp(target, userId);
     return;
   }
-
-  // Инкремент ДО генерации
-  await incrementRequestCount(userId, "videos");
-
-  // Узнаём текущее значение (уже после инкремента)
-  const countsAfter = await getUserRequestCounts(userId);
-  const isFirstVideoToday = (countsAfter.videos || 0) === 1;
 
   const inputImage = await downloadIncomingImage(incomingImageUrl);
 
-  const videoBuffer = await makeVideoFromWorkerViaHttp({
-    inputBuffer: inputImage.buffer,
-    prompt
+  const videoBuffer = await makeVideoFromFalSeedance({
+    inputImage
   });
 
-  const caption = `🎬 Готово! Сделал видео.\nПромт: ${prompt.slice(0, 700)}`;
-  await sendMaxVideo(target, caption, videoBuffer);
+  await sendMaxVideo(
+    target,
+    [
+      "🎬 **Готово. Фото оживлено.**",
+      "",
+      "Видео создано на 5 секунд через Seedance Lite.",
+      "",
+      "Текст пользователя не использовался — применён встроенный промт оживления фото."
+    ].join("\n"),
+    videoBuffer
+  );
 
-  // ✅ Подсказка после 1-го готового видео
-  if (isFirstVideoToday) {
-    await sendMaxMessage(
-      target,
-      [
-        "🧠 **Как использовать видео дальше:**",
-        "",
-        "1) Отправь **фото** + **промт**.",
-        "2) Пиши: **«оживи фото»** (или «создай видео»).",
-        "3) Можно добавлять эффекты прямо в промт:",
-        "",
-        "🌧️ дождь, ❄️ снег, 🌫️ туман/дымка, 🔥 пламя/огонь, 💡 неон",
-        "🌀 глич (glitch), 🎬 кинематографично, 🌙 мягко/спокойно, 🔎 зум/макро",
-        "↩️ и ещё: слово «поворот» можно добавлять для вращения.",
-        "",
-        "Пример:",
-        "👉 `Оживи фото дождь кинематографично`",
-        "👉 `Оживи фото снег мягко`",
-        "👉 `Оживи фото неон глич`"
-      ].join("\n")
-    ); 
+  const consumeResult = await consumeVideoCredit(userId);
+
+  clearUserImageMode(userId);
+
+  if (!consumeResult.consumed) {
+    console.warn(`Video credit was not consumed for user ${userId}`);
   }
+
+  await sendMaxMessage(
+    target,
+    [
+      "✅ **Видео создано.**",
+      "",
+      `Осталось оплаченных видео: **${consumeResult.creditsLeft || 0}**.`,
+      "",
+      "Для нового видео нажмите «🎬 Оживить фото» в меню и купите ещё один кредит."
+    ].join("\n")
+  );
 
   await maybeSendRandomNudgeAfterGeneration(target, userId);
 }
@@ -4565,7 +5073,7 @@ async function handleUpdate(update) {
       if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         clearUserImageMode(userId);
 
-        await sendCreateVideoHelp(target);
+        await sendCreateVideoHelp(target, userId);
         return;
       }
 
@@ -4778,6 +5286,41 @@ if (musicModeActive) {
 
   return;
 }
+
+    const videoModeActive = isVideoMode(userId);
+
+if (videoModeActive) {
+  if (!incomingImageUrl) {
+    await sendMaxMessage(
+      target,
+      "🎬 Режим оживления фото включён. Отправьте **фото человека**. Текст писать не нужно."
+    );
+    return;
+  }
+
+  if (isUserBusy(userId)) {
+    await sendBusyWarningIfNeeded(target, userId, firstName);
+    return;
+  }
+
+  lockUserProcessing(userId);
+  processingLocked = true;
+
+  status = await startDynamicStatus(target, "🎞️ Видео создаётся");
+
+  await handleVideoRequest(
+    update,
+    target,
+    "",
+    incomingImageUrl,
+    userId
+  );
+
+  await status.stop();
+  status = null;
+
+  return;
+}
     
 
 
@@ -4806,14 +5349,26 @@ if (musicModeActive) {
     processingLocked = true;
 
     if (isVideoRequest(userText, Boolean(incomingImageUrl))) {
-      status = await startDynamicStatus(target, "🎞️Видео создается");
+  const credits = await getVideoCredits(userId);
 
-      await handleVideoRequest(update, target, userText, incomingImageUrl, userId);
+  if (credits <= 0) {
+    clearUserImageMode(userId);
+    await sendCreateVideoHelp(target, userId);
+    return;
+  }
 
-      await status.stop();
-      status = null;
-      return;
-    }
+  setUserImageMode(userId, IMAGE_MODE_VIDEO);
+
+  status = await startDynamicStatus(target, "🎬Оживляем фото");
+
+  await handleVideoRequest(update, target, "", incomingImageUrl, userId);
+
+  await status.stop();
+  status = null;
+  return;
+}
+
+
 
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
       status = await startDynamicStatus(target, "🔮Шедевр создается");
@@ -5012,6 +5567,46 @@ app.get("/music/return", (req, res) => {
     `);
 });
 
+app.get("/video/buy", async (req, res) => {
+  try {
+    const userId = String(req.query.user_id || "").trim();
+
+    if (!isValidUserIdForBroadcast(userId)) {
+      res.status(400).type("text/plain").send("Некорректный user_id.");
+      return;
+    }
+
+    const payment = await createYooKassaVideoPayment(userId);
+    const confirmationUrl = payment?.confirmation?.confirmation_url;
+
+    if (!confirmationUrl) {
+      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
+    }
+
+    res.redirect(302, confirmationUrl);
+  } catch (error) {
+    console.error("Video payment create failed:", error);
+    res
+      .status(500)
+      .type("text/plain")
+      .send("Не удалось создать платеж за видео. Вернитесь в бота и попробуйте позже.");
+  }
+});
+
+app.get("/video/return", (req, res) => {
+  res
+    .status(200)
+    .type("text/html; charset=utf-8")
+    .send(`
+      <html>
+        <body style="font-family: Arial, sans-serif; padding: 24px;">
+          <h2>Спасибо за оплату</h2>
+          <p>Если платеж прошел успешно, доступ к оживлению фото будет активирован автоматически. Вернитесь в бот.</p>
+        </body>
+      </html>
+    `);
+});
+
 async function handleYooKassaWebhook(req, res) {
   // YooKassa нужно быстро получить HTTP 200.
   res.status(200).json({ ok: true });
@@ -5126,6 +5721,37 @@ async function handleYooKassaWebhook(req, res) {
 
   return;
 }
+
+      if (product === VIDEO_PRODUCT_CODE) {
+  const result = await applyVideoPayment(payment);
+
+  console.log("Video payment apply result:", result);
+
+  if (result.granted && result.userId) {
+    setUserImageMode(result.userId, IMAGE_MODE_VIDEO);
+
+    await sendMaxMessage(
+      {
+        type: "user_id",
+        id: result.userId
+      },
+      [
+        "✅ **Оплата прошла. Оживление фото доступно.**",
+        "",
+        "Теперь просто отправьте **фото человека**.",
+        "",
+        "Текст можно не писать. Если отправите фото с текстом — текст будет проигнорирован.",
+        "",
+        "Я сделаю видео на **5 секунд** через Seedance Lite: человек будет смотреть в камеру, слегка улыбаться и мягко махать рукой."
+      ].join("\n")
+    ).catch((error) => {
+      console.warn("Failed to send video success message:", error?.message || error);
+    });
+  }
+
+  return;
+}
+      
 
       console.warn("Unknown YooKassa product:", {
         paymentId,
