@@ -2624,7 +2624,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🎬 Оживить фото (демо)",
+        text: "🎬 Оживить фото",
         payload: MENU_CREATE_VIDEO_PAYLOAD
       }
     ],
@@ -5355,13 +5355,42 @@ if (videoModeActive) {
     
 
 
-    if (!userText && incomingImageUrl) {
-      await sendMaxMessage(
-        target,
-        "Фото получил. Теперь отправьте его вместе с текстом, что нужно изменить или создать на его основе."
-      );
+if (!userText && incomingImageUrl) {
+  const videoCredits = await getVideoCredits(userId);
+
+  if (videoCredits > 0) {
+    setUserImageMode(userId, IMAGE_MODE_VIDEO);
+
+    if (isUserBusy(userId)) {
+      await sendBusyWarningIfNeeded(target, userId, firstName);
       return;
     }
+
+    lockUserProcessing(userId);
+    processingLocked = true;
+
+    status = await startDynamicStatus(target, "🎬 Оживляем фото");
+
+    await handleVideoRequest(
+      update,
+      target,
+      "",
+      incomingImageUrl,
+      userId
+    );
+
+    await status.stop();
+    status = null;
+
+    return;
+  }
+
+  await sendMaxMessage(
+    target,
+    "Фото получил. Теперь отправьте его вместе с текстом, что нужно изменить или создать на его основе."
+  );
+  return;
+}
 
     if (!userText) {
       await sendMaxMessage(
