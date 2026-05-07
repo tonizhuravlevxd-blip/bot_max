@@ -2649,7 +2649,7 @@ async function sendMaxVideoToken(target, text, token) {
   ];
 
   const retries = Number(process.env.VIDEO_EXAMPLE_SEND_RETRIES || 4);
-  const baseDelayMs = Number(process.env.VIDEO_EXAMPLE_SEND_RETRY_DELAY_MS || 900);
+  const baseDelayMs = Number(process.env.VIDEO_EXAMPLE_SEND_RETRY_DELAY_MS || 200);
 
   let lastError;
 
