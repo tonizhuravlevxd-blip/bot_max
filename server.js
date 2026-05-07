@@ -1,6 +1,7 @@
 import express from "express";
 import pg from "pg";
 import crypto from "crypto";
+import { fal } from "@fal-ai/client";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -46,6 +47,11 @@ const MENU_CREATE_MUSIC_PAYLOAD = "menu_create_music";
 const IMAGE_MODE_MUSIC = "music";
 
 const FAL_KEY = process.env.FAL_KEY || "";
+
+fal.config({
+  credentials: FAL_KEY
+});
+
 const FAL_SEEDANCE_IMAGE_TO_VIDEO_URL =
   process.env.FAL_SEEDANCE_IMAGE_TO_VIDEO_URL ||
   "https://queue.fal.run/fal-ai/bytedance/seedance/v1/lite/image-to-video";
@@ -55,7 +61,7 @@ const FAL_QUEUE_POLL_INTERVAL_MS = Number(process.env.FAL_QUEUE_POLL_INTERVAL_MS
 
 const VIDEO_PRICE_RUB = process.env.VIDEO_PRICE_RUB || "59.00";
 const VIDEO_PRODUCT_CODE = "photo_animation_video";
-const VIDEO_EXAMPLE_URL = process.env.VIDEO_EXAMPLE_URL || "https://fal.ai/models/fal-ai/bytedance/seedance/v1/lite/image-to-video/playground?share=0033ef3f-ad68-44bf-8edc-e7a6b08a59c1";
+const VIDEO_EXAMPLE_URL = process.env.VIDEO_EXAMPLE_URL || "https://v3b.fal.media/files/b/0a994a93/nP39rGAe_VTIOtxt4ZoPB_video.mp4";
 
 const IMAGE_MODE_VIDEO = "video_animation";
 
@@ -242,6 +248,20 @@ function getUserFirstName(update) {
   }
 
   return "";
+}
+
+async function uploadImageToFalCdn(inputImage) {
+  if (!FAL_KEY) {
+    throw new Error("FAL_KEY is not set");
+  }
+
+  const file = new File(
+    [inputImage.buffer],
+    inputImage.filename || "input.png",
+    { type: inputImage.mime || "image/png" }
+  );
+
+  return fal.storage.upload(file);
 }
 
 function formatChatGptAnswerWithName(firstName, answer) {
@@ -4248,7 +4268,7 @@ async function downloadBufferFromUrl(url, expectedPrefix = "") {
 }
 
 async function makeVideoFromFalSeedance({ inputImage }) {
-  const imageUrl = makeDataUriFromImage(inputImage);
+  const imageUrl = await uploadImageToFalCdn(inputImage);
 
   const submitResult = await falRequest(FAL_SEEDANCE_IMAGE_TO_VIDEO_URL, {
     method: "POST",
@@ -4542,9 +4562,27 @@ function safeUserError(error) {
 
   const message = String(error?.message || error || "Unknown error");
 
-  if (/PROHIBITED_CONTENT|promptFeedback|blockReason|prompt blocked|SAFETY|BLOCKLIST|IMAGE_SAFETY/i.test(message)) {
+  // Сначала FAL / Seedance, чтобы ошибки видео не попадали в блок Gemini
+  if (/FAL|fal|Seedance|queue\.fal|safety_checker|video\.url|FAL API|fal\.ai/i.test(message)) {
     return [
-      "⚠️ Запрос был заблокирован фильтром безопасности Gemini.",
+      "🎬 Не получилось создать видео через FAL Seedance.",
+      "",
+      "Возможные причины:",
+      "• не задан или неверный FAL_KEY;",
+      "• закончился баланс FAL;",
+      "• нет доступа к модели Seedance;",
+      "• фото не подошло для image-to-video;",
+      "• модель заблокировала фото фильтром безопасности;",
+      "• временная ошибка очереди FAL.",
+      "",
+      "Кредит лучше проверить вручную в базе, потому что он списывается только после успешной отправки видео."
+    ].join("\n");
+  }
+
+  // Отдельно Gemini / Lyria safety
+  if (/Gemini|Lyria|generativelanguage|PROHIBITED_CONTENT|promptFeedback|blockReason|prompt blocked|SAFETY|BLOCKLIST|IMAGE_SAFETY/i.test(message)) {
+    return [
+      "⚠️ Запрос был заблокирован фильтром безопасности Gemini/Lyria.",
       "",
       "Кредит не списан. Попробуйте переформулировать описание без реальных артистов, существующих песен, узнаваемых мелодий и спорных тем.",
       "",
@@ -4553,19 +4591,12 @@ function safeUserError(error) {
     ].join("\n");
   }
 
-  if (/content_policy|safety|moderation/i.test(message)) {
-    return "📲Не получилось создать изображение: запрос не прошёл проверку безопасности. Попробуйте изменить описание";
+  if (/content_policy|moderation/i.test(message)) {
+    return "📲 Не получилось создать изображение: запрос не прошёл проверку безопасности. Попробуйте изменить описание.";
   }
 
   if (/OpenAI/i.test(message)) {
     return "Не получилось получить ответ от OpenAI. Проверьте модель, ключ API и лимиты аккаунта.";
-  }
-
-  if (/Gemini|Lyria|generativelanguage/i.test(message)) {
-    return "Не получилось создать музыку через Gemini/Lyria. Проверьте GEMINI_API_KEY, доступ к модели, биллинг и лимиты аккаунта.";
-  }
-  if (/FAL|fal|Seedance|queue\.fal/i.test(message)) {
-    return "Не получилось создать видео через FAL Seedance. Проверьте FAL_KEY, баланс FAL, доступ к модели и параметры duration/resolution.";
   }
 
   if (/MAX/i.test(message)) {
