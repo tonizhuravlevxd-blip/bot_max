@@ -149,6 +149,17 @@ const MENU_PREMIUM_PAYLOAD = "menu_premium";
 const MENU_BACK_PAYLOAD = "menu_back";
 const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
 
+// Быстрый ответ на обычные callback-кнопки меню
+const FAST_CALLBACK_PAYLOADS = new Set([
+  MENU_CREATE_PHOTO_PAYLOAD,
+  MENU_RESTORE_PHOTO_PAYLOAD,
+  MENU_CREATE_VIDEO_PAYLOAD,
+  MENU_PRODUCT_CARD_PAYLOAD,
+  MENU_CREATE_MUSIC_PAYLOAD,
+  MENU_PREMIUM_PAYLOAD,
+  MENU_BACK_PAYLOAD
+]);
+
 const IMAGE_MODE_RESTORATION = "restoration";
 const IMAGE_MODE_PRODUCT_CARD = "product_card";
 
