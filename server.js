@@ -35,6 +35,7 @@ const YOOKASSA_TAX_SYSTEM_CODE = process.env.YOOKASSA_TAX_SYSTEM_CODE
 
 const PREMIUM_IMAGE_REQUEST_LIMIT = Number(process.env.PREMIUM_IMAGE_REQUEST_LIMIT || 10);
 const PREMIUM_CHATGPT_REQUEST_LIMIT = Number(process.env.PREMIUM_CHATGPT_REQUEST_LIMIT || 16);
+const PREMIUM_VIDEO_REQUEST_LIMIT = Number(process.env.PREMIUM_VIDEO_REQUEST_LIMIT || 1);
 const PREMIUM_DURATION_DAYS = Number(process.env.PREMIUM_DURATION_DAYS || 30);
 const PREMIUM_PRICE_RUB = process.env.PREMIUM_PRICE_RUB || "199.00";
 const PRODUCT_CARD_PRICE_RUB = process.env.PRODUCT_CARD_PRICE_RUB || "79.00";
@@ -1125,7 +1126,45 @@ async function getUserDailyLimits(userId) {
     premium,
     images: premium ? PREMIUM_IMAGE_REQUEST_LIMIT : IMAGE_REQUEST_LIMIT,
     chatgpt: premium ? PREMIUM_CHATGPT_REQUEST_LIMIT : CHATGPT_REQUEST_LIMIT,
-    videos: VIDEO_REQUEST_LIMIT
+    videos: premium ? PREMIUM_VIDEO_REQUEST_LIMIT : VIDEO_REQUEST_LIMIT
+  };
+}
+async function getVideoAccessForUser(userId) {
+  const counts = await getUserRequestCounts(userId);
+  const limits = await getUserDailyLimits(userId);
+
+  const usedPremiumVideos = Number(counts.videos || 0);
+  const premiumVideoLimit = Number(limits.videos || 0);
+
+  if (limits.premium && usedPremiumVideos < premiumVideoLimit) {
+    return {
+      allowed: true,
+      source: "premium",
+      premium: true,
+      usedPremiumVideos,
+      premiumVideoLimit,
+      premiumVideosLeft: premiumVideoLimit - usedPremiumVideos
+    };
+  }
+
+  const credits = await getVideoCredits(userId);
+
+  if (credits > 0) {
+    return {
+      allowed: true,
+      source: "credit",
+      premium: limits.premium,
+      credits
+    };
+  }
+
+  return {
+    allowed: false,
+    source: "none",
+    premium: limits.premium,
+    usedPremiumVideos,
+    premiumVideoLimit,
+    credits: 0
   };
 }
 
@@ -2971,18 +3010,23 @@ async function sendRestorationPhotoHelp(target) {
 }
 
 async function sendCreateVideoHelp(target, userId) {
-  const credits = await getVideoCredits(userId);
+  const videoAccess = await getVideoAccessForUser(userId);
   const buyUrl = buildVideoBuyUrl(userId);
 
-  if (credits > 0) {
+  if (videoAccess.allowed) {
     setUserImageMode(userId, IMAGE_MODE_VIDEO);
+
+    const accessText =
+      videoAccess.source === "premium"
+        ? `У вас доступно Premium-видео сегодня: **${videoAccess.premiumVideosLeft}**.`
+        : `У вас доступно оплаченных видео: **${videoAccess.credits}**.`;
 
     return sendMaxMessageWithAttachments(
       target,
       [
         "🎬 **Режим оживления фото включён.**",
         "",
-        `У вас доступно оплаченных видео: **${credits}**.`,
+        accessText,
         "",
         "Теперь просто отправьте **фото человека**.",
         "",
@@ -3009,11 +3053,19 @@ async function sendCreateVideoHelp(target, userId) {
     "• человек сохранит лицо и внешность;\n" +
     "• слегка улыбнётся;\n" +
     "• будет смотреть в камеру;\n" +
-    "• мягко помашет рукой, если это возможно по фото.\n\n" +
-    "После оплаты вы получите **1 видео-кредит**. Затем просто отправьте фото — текст будет проигнорирован.";
+    "• мягко помашет рукой, если это возможно по фото.\n\n";
+
+  if (videoAccess.premium) {
+    text +=
+      "Ваше **Premium-видео на сегодня уже использовано**.\n" +
+      "Чтобы сделать ещё одно видео сегодня, можно купить отдельный видео-кредит.\n\n";
+  } else {
+    text +=
+      "После оплаты вы получите **1 видео-кредит**. Затем просто отправьте фото — текст будет проигнорирован.\n\n";
+  }
 
   if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY || !FAL_KEY) {
-    text += "\n\n⚠️ Оплата или FAL пока не настроены. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY и FAL_KEY.";
+    text += "⚠️ Оплата или FAL пока не настроены. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY и FAL_KEY.";
   }
 
   const buttons = [];
@@ -3097,9 +3149,10 @@ async function sendPremiumInfo(target, userId) {
   let text =
     "💸 **Отключить лимиты**\n\n" +
     "*Что дает Премиум?*\n\n" +
-    "1. Вместо 4 фото в день Вы получите 10 фото с лучшей моделью.\n" +
-    "2. Вместо ChatGPT 8 запросов — 16 запросов в день.\n" +
-    "3. Уйдет обязательная подписка на каналы.\n\n" +
+    "**1. Вместо 4 фото в день Вы получите 10 фото с лучшей моделью.**\n" +
+    "**2. Вместо ChatGPT 8 запросов — 16 запросов в день.**\n" +
+    "**3. Уйдет обязательная подписка на каналы.**\n\n" +
+    "**4. 1 оживление фото в день бесплатно.**\n" +
     "Вы становитесь **Спонсором Бота** и членом нашей семьи.\n\n" +
     "💳 Стоимость: *199 ₽ за 30 дней*.";
 
@@ -5117,9 +5170,9 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
     return;
   }
 
-  const credits = await getVideoCredits(userId);
+  const videoAccess = await getVideoAccessForUser(userId);
 
-  if (credits <= 0) {
+  if (!videoAccess.allowed) {
     clearUserImageMode(userId);
     await sendCreateVideoHelp(target, userId);
     return;
@@ -5143,9 +5196,37 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
     videoBuffer
   );
 
-  const consumeResult = await consumeVideoCredit(userId);
-
   clearUserImageMode(userId);
+
+  if (videoAccess.source === "premium") {
+    await incrementRequestCount(userId, "videos");
+
+    const countsAfter = await getUserRequestCounts(userId);
+    const limitsAfter = await getUserDailyLimits(userId);
+
+    const premiumVideosLeft = Math.max(
+      0,
+      Number(limitsAfter.videos || 0) - Number(countsAfter.videos || 0)
+    );
+
+    await sendMaxMessage(
+      target,
+      [
+        "✅ **Видео создано за счёт Premium.**",
+        "",
+        `Premium-видео на сегодня осталось: **${premiumVideosLeft}**.`,
+        "",
+        premiumVideosLeft > 0
+          ? "Можете создать ещё одно Premium-видео сегодня."
+          : "Если нужно ещё видео сегодня — купите отдельный видео-кредит."
+      ].join("\n")
+    );
+
+    await maybeSendRandomNudgeAfterGeneration(target, userId);
+    return;
+  }
+
+  const consumeResult = await consumeVideoCredit(userId);
 
   if (!consumeResult.consumed) {
     console.warn(`Video credit was not consumed for user ${userId}`);
@@ -5538,9 +5619,9 @@ if (videoModeActive) {
 
 
 if (!userText && incomingImageUrl) {
-  const videoCredits = await getVideoCredits(userId);
+  const videoAccess = await getVideoAccessForUser(userId);
 
-  if (videoCredits > 0) {
+  if (videoAccess.allowed) {
     setUserImageMode(userId, IMAGE_MODE_VIDEO);
 
     if (isUserBusy(userId)) {
@@ -5590,10 +5671,10 @@ if (!userText && incomingImageUrl) {
     lockUserProcessing(userId);
     processingLocked = true;
 
-    if (isVideoRequest(userText, Boolean(incomingImageUrl))) {
-  const credits = await getVideoCredits(userId);
+if (isVideoRequest(userText, Boolean(incomingImageUrl))) {
+  const videoAccess = await getVideoAccessForUser(userId);
 
-  if (credits <= 0) {
+  if (!videoAccess.allowed) {
     clearUserImageMode(userId);
     await sendCreateVideoHelp(target, userId);
     return;
@@ -5887,6 +5968,7 @@ async function handleYooKassaWebhook(req, res) {
               "Теперь вам открыт доступ:",
               "• 10 фото в день с лучшей моделью;",
               "• 16 запросов ChatGPT в день;",
+              "• 1 оживление фото в день;",
               "• без обязательной подписки на каналы.",
               "",
               "Спасибо, вы стали Спонсором Бота и членом нашей семьи 🙌🏻"
