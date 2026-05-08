@@ -40,7 +40,7 @@ const GEMINI_API_BASE =
 const GEMINI_LYRIA_MODEL =
   process.env.GEMINI_LYRIA_MODEL || "lyria-3-clip-preview";
 
-const MUSIC_PRICE_RUB = process.env.MUSIC_PRICE_RUB || "99.00";
+const MUSIC_PRICE_RUB = process.env.MUSIC_PRICE_RUB || "69.00";
 const MUSIC_PRODUCT_CODE = "music_track";
 
 const MENU_CREATE_MUSIC_PAYLOAD = "menu_create_music";
@@ -1926,7 +1926,7 @@ async function createYooKassaMusicPayment(userId) {
 
   const key = getUserRequestKey(userId);
 
-  const price = Number(MUSIC_PRICE_RUB || 99);
+  const price = Number(MUSIC_PRICE_RUB || 69);
   const priceValue = price.toFixed(2);
 
   const description = "Создание музыки AI";
