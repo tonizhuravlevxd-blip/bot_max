@@ -9,6 +9,14 @@ app.use(express.json({ limit: "10mb" }));
 const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
+const DEBUG_LOGS =
+  String(process.env.DEBUG_LOGS || "false").toLowerCase() === "true";
+
+function debugLog(...args) {
+  if (DEBUG_LOGS) {
+    console.log(...args);
+  }
+}
 
 const IMAGE_REQUEST_LIMIT = 4; 
 const CHATGPT_REQUEST_LIMIT = 8;
@@ -5163,7 +5171,7 @@ async function handleUpdate(update) {
   let status = null;
   let processingLocked = false;
 
-  console.log("Incoming update type:", updateType);
+  debugLog("Incoming update type:", updateType);
 
   if (!target) {
     console.log("No reply target in update:", JSON.stringify(update));
@@ -5207,7 +5215,7 @@ if (shouldRegisterBotUser(broadcastUserId)) {
 
     // Отдельная обработка callback-кнопок
 if (isCallbackUpdate) {
-  console.log("Callback received:", {
+  debugLog("Callback received:", {
     callbackPayload,
     userId,
     target
