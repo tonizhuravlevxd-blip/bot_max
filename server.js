@@ -5319,7 +5319,7 @@ if (isCallbackUpdate) {
   // Проверку подписки обрабатываем отдельно, потому что там нужен текст "Проверяю..."
   if (!isSubCheckCallback) {
     answerCallbackFast(callbackId);
-  }
+  
 
 
       // 1) Проверка подписки по кнопке "Я подписан(а)"
