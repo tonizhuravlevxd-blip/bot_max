@@ -2648,6 +2648,17 @@ async function answerMaxCallback(callbackId, notification = "") {
   }
 }
 
+function answerCallbackFast(callbackId, notification = "") {
+  if (!callbackId) return;
+
+  void answerMaxCallback(callbackId, notification).catch((error) => {
+    console.warn(
+      "Fast callback answer failed:",
+      error?.message || error
+    );
+  });
+}
+
 async function sendMaxSingleMessage(target, text, notify = true) {
   return maxRequest("/messages", {
     method: "POST",
@@ -5302,6 +5313,14 @@ if (isCallbackUpdate) {
     target
   });
 
+  const isSubCheckCallback = isSubscriptionCheckPayload(callbackPayload);
+
+  // Все обычные кнопки подтверждаем сразу, чтобы они не висели в интерфейсе.
+  // Проверку подписки обрабатываем отдельно, потому что там нужен текст "Проверяю..."
+  if (!isSubCheckCallback) {
+    answerCallbackFast(callbackId);
+  }
+
 
       // 1) Проверка подписки по кнопке "Я подписан(а)"
       if (isSubscriptionCheckPayload(callbackPayload)) {
@@ -5343,9 +5362,10 @@ if (isCallbackUpdate) {
           userId
         );
 
-        await handleSubscriptionCheck(target, callbackUserId, callbackId);
-        return;
-      }
+answerCallbackFast(callbackId, "Проверяю подписку...");
+
+await handleSubscriptionCheck(target, callbackUserId, "");
+return;
 
       // 2) Меню: Создать фото
       if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
