@@ -2685,6 +2685,16 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
   });
 }
 
+function runCallbackTaskInBackground(target, taskName, task) {
+  task().catch((error) => {
+    console.error(`${taskName} failed:`, error);
+
+    sendMaxMessage(target, safeUserError(error)).catch((sendError) => {
+      console.error(`Failed to send ${taskName} error to MAX:`, sendError);
+    });
+  });
+}
+
 async function getVideoExampleMaxToken({ force = false } = {}) {
   if (!VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
     return "";
@@ -5347,22 +5357,27 @@ if (isCallbackUpdate) {
         return;
       }
 
-      // 2) Меню: Создать фото
-      if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
-        clearUserImageMode(userId);
+// 2) Меню: Создать фото
+if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
+  clearUserImageMode(userId);
 
-        await sendCreatePhotoHelp(target);
-        return;
-      }
+  runCallbackTaskInBackground(target, "open create photo menu", async () => {
+    await sendCreatePhotoHelp(target);
+  });
 
-      // 3) Меню: Реставрация
-      if (callbackPayload === MENU_RESTORE_PHOTO_PAYLOAD) {
-        setUserImageMode(userId, IMAGE_MODE_RESTORATION);
+  return;
+}
 
-        await sendRestorationPhotoHelp(target);
-        return;
-      }
+// 3) Меню: Реставрация
+if (callbackPayload === MENU_RESTORE_PHOTO_PAYLOAD) {
+  setUserImageMode(userId, IMAGE_MODE_RESTORATION);
 
+  runCallbackTaskInBackground(target, "open restoration menu", async () => {
+    await sendRestorationPhotoHelp(target);
+  });
+
+  return;
+}
       // 4) Меню: Оживить фото (демо)
 if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
   clearUserImageMode(userId);
@@ -5394,13 +5409,16 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         return;
       }
 
-      // 6) Кнопка "Назад" — возвращаем к меню
-      if (callbackPayload === MENU_BACK_PAYLOAD) {
-        clearUserImageMode(userId);
+// 6) Кнопка "Назад" — возвращаем к меню
+if (callbackPayload === MENU_BACK_PAYLOAD) {
+  clearUserImageMode(userId);
 
-        await sendMainMenu(target);
-        return;
-      }
+  runCallbackTaskInBackground(target, "open main menu", async () => {
+    await sendMainMenu(target);
+  });
+
+  return;
+}
 
       // 7) Неизвестная кнопка
       if (callbackId) {
