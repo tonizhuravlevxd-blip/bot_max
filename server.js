@@ -5369,6 +5369,7 @@ answerCallbackFast(callbackId, "Проверяю подписку...");
 
 await handleSubscriptionCheck(target, callbackUserId, "");
 return;
+}
 
       // 2) Меню: Создать фото
       if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
