@@ -5404,6 +5404,27 @@ if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
     target
   });
 
+  if (callbackId) {
+    answerMaxCallback(callbackId)
+      .then((ok) => {
+        console.log(
+          "PHOTO answerMaxCallback done:",
+          Date.now() - startedAt,
+          "ms",
+          "ok:",
+          ok
+        );
+      })
+      .catch((error) => {
+        console.warn(
+          "PHOTO answerMaxCallback failed:",
+          Date.now() - startedAt,
+          "ms",
+          error?.message || error
+        );
+      });
+  }
+
   clearUserImageMode(userId);
 
   console.log("PHOTO before sendCreatePhotoHelp:", Date.now() - startedAt, "ms");
