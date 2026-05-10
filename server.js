@@ -2611,10 +2611,13 @@ async function applyVideoPayment(payment) {
   }
 }
 
+const SILENT_CALLBACK_NOTIFICATION = "\u2060"; // невидимый символ
+
 async function answerMaxCallback(callbackId, notification = "") {
   if (!callbackId) return false;
 
-  const text = String(notification || "").trim();
+  const rawText = String(notification || "");
+  const text = rawText.trim() ? rawText.trim() : SILENT_CALLBACK_NOTIFICATION;
 
   try {
     await maxRequest("/answers", {
@@ -2623,27 +2626,36 @@ async function answerMaxCallback(callbackId, notification = "") {
         callback_id: callbackId
       },
       body: {
-        notification: text || null
+        notification: text
       }
     });
 
     return true;
   } catch (firstError) {
-    console.warn("MAX callback answer with query failed:", firstError?.message || firstError);
+    console.warn(
+      "MAX callback answer with query failed:",
+      firstError?.message || firstError
+    );
   }
 
+  // Fallback: иногда API может ожидать message вместо notification
   try {
     await maxRequest("/answers", {
       method: "POST",
+      query: {
+        callback_id: callbackId
+      },
       body: {
-        callback_id: callbackId,
-        notification: text || null
+        message: text
       }
     });
 
     return true;
   } catch (secondError) {
-    console.warn("MAX callback answer with body failed:", secondError?.message || secondError);
+    console.warn(
+      "MAX callback answer with message failed:",
+      secondError?.message || secondError
+    );
     return false;
   }
 }
