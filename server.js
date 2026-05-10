@@ -5438,32 +5438,11 @@ if (isCallbackUpdate) {
 
 // 2) Меню: Создать фото
 if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
-  const startedAt = Date.now();
-
-  console.log("PHOTO callback start:", {
-    callbackId,
-    userId,
-    target
-  });
-
   clearUserImageMode(userId);
 
-  answerCreatePhotoHelp(callbackId, target)
-    .then(() => {
-      console.log(
-        "PHOTO answerCreatePhotoHelp done:",
-        Date.now() - startedAt,
-        "ms"
-      );
-    })
-    .catch((error) => {
-      console.error(
-        "PHOTO answerCreatePhotoHelp failed:",
-        error?.message || error
-      );
-    });
-
-  console.log("PHOTO callback returned:", Date.now() - startedAt, "ms");
+  answerCreatePhotoHelp(callbackId, target).catch((error) => {
+    console.error("answerCreatePhotoHelp failed:", error?.message || error);
+  });
 
   return;
 }
@@ -5472,8 +5451,8 @@ if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
 if (callbackPayload === MENU_RESTORE_PHOTO_PAYLOAD) {
   setUserImageMode(userId, IMAGE_MODE_RESTORATION);
 
-  runCallbackTaskInBackground(target, "open restoration menu", async () => {
-    await sendRestorationPhotoHelp(target);
+  answerRestorationPhotoHelp(callbackId, target).catch((error) => {
+    console.error("answerRestorationPhotoHelp failed:", error?.message || error);
   });
 
   return;
@@ -5511,32 +5490,11 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
 
 // 6) Кнопка "Назад" — возвращаем к меню
 if (callbackPayload === MENU_BACK_PAYLOAD) {
-  const startedAt = Date.now();
-
-  console.log("BACK callback start:", {
-    callbackId,
-    userId,
-    target
-  });
-
   clearUserImageMode(userId);
 
-  answerMainMenu(callbackId, target)
-    .then(() => {
-      console.log(
-        "BACK answerMainMenu done:",
-        Date.now() - startedAt,
-        "ms"
-      );
-    })
-    .catch((error) => {
-      console.error(
-        "BACK answerMainMenu failed:",
-        error?.message || error
-      );
-    });
-
-  console.log("BACK callback returned:", Date.now() - startedAt, "ms");
+  answerMainMenu(callbackId, target).catch((error) => {
+    console.error("answerMainMenu failed:", error?.message || error);
+  });
 
   return;
 }
