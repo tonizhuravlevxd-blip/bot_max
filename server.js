@@ -3000,6 +3000,23 @@ function buildBackButtonKeyboard() {
   ];
 }
 
+async function answerMainMenu(callbackId, target, prefixText = "") {
+  const text =
+    prefixText ||
+    "Выбери, что хочешь сделать, или пиши прямо в чат✏️.\n\n**🗣️ Совет:** *Попроси в чате написать тебе точный промт для модели Image GPT + опиши свой запрос, а потом создавай фото🔮*";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildMainMenuButtons()
+      }
+    }
+  ];
+
+  return answerMaxCallbackWithMessage(callbackId, target, text, attachments);
+}
+
 async function sendCreatePhotoHelp(target) {
   const text =
     "📸 **Создать фото Бесплатно**\n\n" +
@@ -5549,11 +5566,32 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
 
 // 6) Кнопка "Назад" — возвращаем к меню
 if (callbackPayload === MENU_BACK_PAYLOAD) {
+  const startedAt = Date.now();
+
+  console.log("BACK callback start:", {
+    callbackId,
+    userId,
+    target
+  });
+
   clearUserImageMode(userId);
 
-  runCallbackTaskInBackground(target, "open main menu", async () => {
-    await sendMainMenu(target);
-  });
+  answerMainMenu(callbackId, target)
+    .then(() => {
+      console.log(
+        "BACK answerMainMenu done:",
+        Date.now() - startedAt,
+        "ms"
+      );
+    })
+    .catch((error) => {
+      console.error(
+        "BACK answerMainMenu failed:",
+        error?.message || error
+      );
+    });
+
+  console.log("BACK callback returned:", Date.now() - startedAt, "ms");
 
   return;
 }
