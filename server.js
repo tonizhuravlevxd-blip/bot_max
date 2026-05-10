@@ -2673,16 +2673,53 @@ async function sendMaxMessage(target, text) {
 }
 
 async function sendMaxMessageWithAttachments(target, text, attachments) {
-  return maxRequest("/messages", {
-    method: "POST",
-    query: { [target.type]: target.id },
-    body: {
-      text: text || null,
-      attachments,
-      notify: true,
-      format: "markdown" // включаем Markdown и для сообщений с вложениями
-    }
-  });
+  const startedAt = Date.now();
+
+  try {
+    console.log(
+      "sendMaxMessageWithAttachments start:",
+      JSON.stringify({
+        target,
+        textLength: String(text || "").length,
+        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
+        notify: true
+      })
+    );
+
+    const result = await maxRequest("/messages", {
+      method: "POST",
+      query: { [target.type]: target.id },
+      body: {
+        text: text || null,
+        attachments,
+        notify: true,
+        format: "markdown"
+      }
+    });
+
+    console.log(
+      "sendMaxMessageWithAttachments success:",
+      JSON.stringify({
+        elapsedMs: Date.now() - startedAt,
+        target,
+        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0
+      })
+    );
+
+    return result;
+  } catch (error) {
+    console.error(
+      "sendMaxMessageWithAttachments failed:",
+      JSON.stringify({
+        elapsedMs: Date.now() - startedAt,
+        target,
+        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
+        error: error?.message || String(error)
+      })
+    );
+
+    throw error;
+  }
 }
 
 function runCallbackTaskInBackground(target, taskName, task) {
@@ -5359,11 +5396,27 @@ if (isCallbackUpdate) {
 
 // 2) Меню: Создать фото
 if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
+  const startedAt = Date.now();
+
+  console.log("PHOTO callback start:", {
+    callbackId,
+    userId,
+    target
+  });
+
   clearUserImageMode(userId);
 
-  sendCreatePhotoHelp(target).catch((error) => {
-    console.error("sendCreatePhotoHelp failed:", error);
-  });
+  console.log("PHOTO before sendCreatePhotoHelp:", Date.now() - startedAt, "ms");
+
+  sendCreatePhotoHelp(target)
+    .then(() => {
+      console.log("PHOTO sendCreatePhotoHelp done:", Date.now() - startedAt, "ms");
+    })
+    .catch((error) => {
+      console.error("sendCreatePhotoHelp failed:", error);
+    });
+
+  console.log("PHOTO callback returned:", Date.now() - startedAt, "ms");
 
   return;
 }
