@@ -2611,13 +2611,14 @@ async function applyVideoPayment(payment) {
   }
 }
 
-const SILENT_CALLBACK_NOTIFICATION = "\u2060"; // невидимый символ
-
 async function answerMaxCallback(callbackId, notification = "") {
   if (!callbackId) return false;
 
-  const rawText = String(notification || "");
-  const text = rawText.trim() ? rawText.trim() : SILENT_CALLBACK_NOTIFICATION;
+  const text = String(notification || "").trim();
+
+  // ВАЖНО: пустой callback больше не отправляем.
+  // MAX показывает пустой notification как пустое сообщение.
+  if (!text) return false;
 
   try {
     await maxRequest("/answers", {
@@ -2633,12 +2634,11 @@ async function answerMaxCallback(callbackId, notification = "") {
     return true;
   } catch (firstError) {
     console.warn(
-      "MAX callback answer with query failed:",
+      "MAX callback answer with notification failed:",
       firstError?.message || firstError
     );
   }
 
-  // Fallback: иногда API может ожидать message вместо notification
   try {
     await maxRequest("/answers", {
       method: "POST",
@@ -2731,6 +2731,54 @@ async function sendMaxMessageWithAttachments(target, text, attachments) {
     );
 
     throw error;
+  }
+}
+
+async function answerMaxCallbackWithMessage(callbackId, target, text, attachments) {
+  if (!callbackId) {
+    return sendMaxMessageWithAttachments(target, text, attachments);
+  }
+
+  const startedAt = Date.now();
+
+  try {
+    const result = await maxRequest("/answers", {
+      method: "POST",
+      query: {
+        callback_id: callbackId
+      },
+      body: {
+        message: {
+          text: text || null,
+          attachments,
+          notify: false,
+          format: "markdown"
+        }
+      }
+    });
+
+    console.log(
+      "answerMaxCallbackWithMessage success:",
+      JSON.stringify({
+        elapsedMs: Date.now() - startedAt,
+        target,
+        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0
+      })
+    );
+
+    return result;
+  } catch (error) {
+    console.warn(
+      "answerMaxCallbackWithMessage failed, fallback to /messages:",
+      JSON.stringify({
+        elapsedMs: Date.now() - startedAt,
+        target,
+        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
+        error: error?.message || String(error)
+      })
+    );
+
+    return sendMaxMessageWithAttachments(target, text, attachments);
   }
 }
 
@@ -2970,6 +3018,26 @@ async function sendCreatePhotoHelp(target) {
   ];
 
   return sendMaxMessageWithAttachments(target, text, attachments);
+}
+
+async function answerCreatePhotoHelp(callbackId, target) {
+  const text =
+    "📸 **Создать фото Бесплатно**\n\n" +
+    "Отправь:\n" +
+    "• фото + промт (что изменить/добавить)\n" +
+    "или\n" +
+    "• просто промт с текстом вида: `создай фото/картинку ...`";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildBackButtonKeyboard()
+      }
+    }
+  ];
+
+  return answerMaxCallbackWithMessage(callbackId, target, text, attachments);
 }
 
 async function sendMusicInfo(target, userId) {
@@ -5416,44 +5484,28 @@ if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
     target
   });
 
-  if (callbackId) {
-    answerMaxCallback(callbackId)
-      .then((ok) => {
-        console.log(
-          "PHOTO answerMaxCallback done:",
-          Date.now() - startedAt,
-          "ms",
-          "ok:",
-          ok
-        );
-      })
-      .catch((error) => {
-        console.warn(
-          "PHOTO answerMaxCallback failed:",
-          Date.now() - startedAt,
-          "ms",
-          error?.message || error
-        );
-      });
-  }
-
   clearUserImageMode(userId);
 
-  console.log("PHOTO before sendCreatePhotoHelp:", Date.now() - startedAt, "ms");
-
-  sendCreatePhotoHelp(target)
+  answerCreatePhotoHelp(callbackId, target)
     .then(() => {
-      console.log("PHOTO sendCreatePhotoHelp done:", Date.now() - startedAt, "ms");
+      console.log(
+        "PHOTO answerCreatePhotoHelp done:",
+        Date.now() - startedAt,
+        "ms"
+      );
     })
     .catch((error) => {
-      console.error("sendCreatePhotoHelp failed:", error);
+      console.error(
+        "PHOTO answerCreatePhotoHelp failed:",
+        error?.message || error
+      );
     });
 
   console.log("PHOTO callback returned:", Date.now() - startedAt, "ms");
 
   return;
 }
-
+  
 // 3) Меню: Реставрация
 if (callbackPayload === MENU_RESTORE_PHOTO_PAYLOAD) {
   setUserImageMode(userId, IMAGE_MODE_RESTORATION);
