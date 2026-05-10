@@ -2685,53 +2685,16 @@ async function sendMaxMessage(target, text) {
 }
 
 async function sendMaxMessageWithAttachments(target, text, attachments) {
-  const startedAt = Date.now();
-
-  try {
-    console.log(
-      "sendMaxMessageWithAttachments start:",
-      JSON.stringify({
-        target,
-        textLength: String(text || "").length,
-        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
-        notify: true
-      })
-    );
-
-    const result = await maxRequest("/messages", {
-      method: "POST",
-      query: { [target.type]: target.id },
-      body: {
-        text: text || null,
-        attachments,
-        notify: true,
-        format: "markdown"
-      }
-    });
-
-    console.log(
-      "sendMaxMessageWithAttachments success:",
-      JSON.stringify({
-        elapsedMs: Date.now() - startedAt,
-        target,
-        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0
-      })
-    );
-
-    return result;
-  } catch (error) {
-    console.error(
-      "sendMaxMessageWithAttachments failed:",
-      JSON.stringify({
-        elapsedMs: Date.now() - startedAt,
-        target,
-        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
-        error: error?.message || String(error)
-      })
-    );
-
-    throw error;
-  }
+  return maxRequest("/messages", {
+    method: "POST",
+    query: { [target.type]: target.id },
+    body: {
+      text: text || null,
+      attachments,
+      notify: true,
+      format: "markdown"
+    }
+  });
 }
 
 async function answerMaxCallbackWithMessage(callbackId, target, text, attachments) {
@@ -2739,10 +2702,8 @@ async function answerMaxCallbackWithMessage(callbackId, target, text, attachment
     return sendMaxMessageWithAttachments(target, text, attachments);
   }
 
-  const startedAt = Date.now();
-
   try {
-    const result = await maxRequest("/answers", {
+    return await maxRequest("/answers", {
       method: "POST",
       query: {
         callback_id: callbackId
@@ -2756,26 +2717,10 @@ async function answerMaxCallbackWithMessage(callbackId, target, text, attachment
         }
       }
     });
-
-    console.log(
-      "answerMaxCallbackWithMessage success:",
-      JSON.stringify({
-        elapsedMs: Date.now() - startedAt,
-        target,
-        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0
-      })
-    );
-
-    return result;
   } catch (error) {
     console.warn(
       "answerMaxCallbackWithMessage failed, fallback to /messages:",
-      JSON.stringify({
-        elapsedMs: Date.now() - startedAt,
-        target,
-        attachmentsCount: Array.isArray(attachments) ? attachments.length : 0,
-        error: error?.message || String(error)
-      })
+      error?.message || error
     );
 
     return sendMaxMessageWithAttachments(target, text, attachments);
