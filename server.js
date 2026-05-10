@@ -5451,8 +5451,8 @@ if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
 if (callbackPayload === MENU_RESTORE_PHOTO_PAYLOAD) {
   setUserImageMode(userId, IMAGE_MODE_RESTORATION);
 
-  answerRestorationPhotoHelp(callbackId, target).catch((error) => {
-    console.error("answerRestorationPhotoHelp failed:", error?.message || error);
+  runCallbackTaskInBackground(target, "open restoration menu", async () => {
+    await sendRestorationPhotoHelp(target);
   });
 
   return;
