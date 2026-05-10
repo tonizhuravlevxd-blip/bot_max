@@ -5361,8 +5361,8 @@ if (isCallbackUpdate) {
 if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
   clearUserImageMode(userId);
 
-  runCallbackTaskInBackground(target, "open create photo menu", async () => {
-    await sendCreatePhotoHelp(target);
+  sendCreatePhotoHelp(target).catch((error) => {
+    console.error("sendCreatePhotoHelp failed:", error);
   });
 
   return;
