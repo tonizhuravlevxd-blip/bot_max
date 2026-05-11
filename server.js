@@ -73,7 +73,7 @@ const VIDEO_PRICE_RUB = process.env.VIDEO_PRICE_RUB || "59.00";
 const VIDEO_PRODUCT_CODE = "photo_animation_video";
 
 const FAMILY_VIDEO_PRICE_RUB =
-  process.env.FAMILY_VIDEO_PRICE_RUB || "149.00";
+  process.env.FAMILY_VIDEO_PRICE_RUB || "99.00";
 
 const FAMILY_VIDEO_PRODUCT_CODE = "family_photo_animation_video";
 const VIDEO_EXAMPLE_URL =
