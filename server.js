@@ -71,11 +71,24 @@ const FAL_QUEUE_POLL_INTERVAL_MS = Number(process.env.FAL_QUEUE_POLL_INTERVAL_MS
 
 const VIDEO_PRICE_RUB = process.env.VIDEO_PRICE_RUB || "59.00";
 const VIDEO_PRODUCT_CODE = "photo_animation_video";
-const VIDEO_EXAMPLE_URL = process.env.VIDEO_EXAMPLE_URL || "https://v3b.fal.media/files/b/0a994a93/nP39rGAe_VTIOtxt4ZoPB_video.mp4";
+const VIDEO_EXAMPLE_URL =
+  process.env.VIDEO_EXAMPLE_URL ||
+  "https://v3b.fal.media/files/b/0a994a93/nP39rGAe_VTIOtxt4ZoPB_video.mp4";
+
 const VIDEO_EXAMPLE_MAX_TOKEN = process.env.VIDEO_EXAMPLE_MAX_TOKEN || "";
+
+const FAMILY_VIDEO_EXAMPLE_URL =
+  process.env.FAMILY_VIDEO_EXAMPLE_URL ||
+  "";
+
+const FAMILY_VIDEO_EXAMPLE_MAX_TOKEN =
+  process.env.FAMILY_VIDEO_EXAMPLE_MAX_TOKEN || "";
 
 let cachedVideoExampleToken = VIDEO_EXAMPLE_MAX_TOKEN;
 let videoExampleTokenPromise = null;
+
+let cachedFamilyVideoExampleToken = FAMILY_VIDEO_EXAMPLE_MAX_TOKEN;
+let familyVideoExampleTokenPromise = null;
 
 const IMAGE_MODE_VIDEO = "video_animation";
 const IMAGE_MODE_FAMILY_VIDEO = "family_video_animation";
@@ -2841,6 +2854,41 @@ async function getVideoExampleMaxToken({ force = false } = {}) {
   }
 }
 
+async function getFamilyVideoExampleMaxToken({ force = false } = {}) {
+  if (!FAMILY_VIDEO_EXAMPLE_URL && !cachedFamilyVideoExampleToken) {
+    return "";
+  }
+
+  if (!force && cachedFamilyVideoExampleToken) {
+    return cachedFamilyVideoExampleToken;
+  }
+
+  if (!force && familyVideoExampleTokenPromise) {
+    return familyVideoExampleTokenPromise;
+  }
+
+  familyVideoExampleTokenPromise = (async () => {
+    const videoBuffer = await downloadBufferFromUrl(
+      FAMILY_VIDEO_EXAMPLE_URL,
+      "video/"
+    );
+
+    const token = await uploadVideoToMaxAndGetToken(videoBuffer);
+
+    cachedFamilyVideoExampleToken = token;
+
+    console.log(`FAMILY_VIDEO_EXAMPLE_MAX_TOKEN=${token}`);
+
+    return token;
+  })();
+
+  try {
+    return await familyVideoExampleTokenPromise;
+  } finally {
+    familyVideoExampleTokenPromise = null;
+  }
+}
+
 async function sendMaxVideoToken(target, text, token) {
   const attachments = [
     {
@@ -3353,23 +3401,35 @@ async function sendFamilyVideoHelp(target, userId) {
     ]);
   }
 
-  buttons.push([
-    {
-      type: "callback",
-      text: "⬅️ Назад к меню",
-      payload: MENU_BACK_PAYLOAD
-    }
-  ]);
+buttons.push([
+  {
+    type: "callback",
+    text: "⬅️ Назад к меню",
+    payload: MENU_BACK_PAYLOAD
+  }
+]);
 
-  return sendMaxMessageWithAttachments(target, text, [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons
-      }
-    }
+const keyboardAttachment = {
+  type: "inline_keyboard",
+  payload: {
+    buttons
+  }
+};
+
+const token = await getFamilyVideoExampleMaxToken().catch((error) => {
+  console.warn("Family video example token failed:", error?.message || error);
+  return "";
+});
+
+if (token) {
+  return sendMaxVideoTokenWithAttachments(target, text, token, [
+    keyboardAttachment
   ]);
 }
+
+return sendMaxMessageWithAttachments(target, text, [
+  keyboardAttachment
+]);
 
 function isMusicMode(userId) {
   return getUserImageMode(userId) === IMAGE_MODE_MUSIC;
@@ -6686,14 +6746,18 @@ Promise.all([
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`MAX OpenAI bot is running on port ${PORT}`);
 
-    setTimeout(() => {
-      if (VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
-        getVideoExampleMaxToken().catch((error) => {
-          console.warn("Video example warmup failed:", error?.message || error);
-        });
-      }
-    }, 2000).unref?.();
-  });
-});
+setTimeout(() => {
+  if (VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
+    getVideoExampleMaxToken().catch((error) => {
+      console.warn("Video example warmup failed:", error?.message || error);
+    });
+  }
+
+  if (FAMILY_VIDEO_EXAMPLE_URL && !cachedFamilyVideoExampleToken) {
+    getFamilyVideoExampleMaxToken().catch((error) => {
+      console.warn("Family video example warmup failed:", error?.message || error);
+    });
+  }
+}, 2000).unref?.();
 
   
