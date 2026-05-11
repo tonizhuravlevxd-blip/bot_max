@@ -3330,7 +3330,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "💵 Отключить лимиты",
+        text: "💵 Купить Подписку",
         payload: MENU_PREMIUM_PAYLOAD
       }
     ]
