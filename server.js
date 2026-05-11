@@ -78,6 +78,8 @@ let cachedVideoExampleToken = VIDEO_EXAMPLE_MAX_TOKEN;
 let videoExampleTokenPromise = null;
 
 const IMAGE_MODE_VIDEO = "video_animation";
+const IMAGE_MODE_FAMILY_VIDEO = "family_video_animation";
+const VIDEO_MODE_FAMILY_PAYMENT = "family";
 
 const VIDEO_ANIMATE_PHOTO_PROMPT = `Animate this photo into a realistic video with strict identity preservation.
 
@@ -102,6 +104,32 @@ Avoid:
 any facial changes, makeup, skin smoothing, exaggerated motion, strong expressions, distorted hands, distorted body proportions, looking away from the camera, AI artifacts.
 
 The final result must look like real footage of the same person from the original image, maintaining direct eye contact with the viewer, a soft natural smile, and subtle realistic waving.`;
+
+const FAMILY_VIDEO_PROMPT = `Use Image 1 as the start image and Person 1. Use Image 2 as the end image and Person 2.
+
+Create a realistic vertical video with a total duration of 6 seconds.
+
+Image 1 is the opening subject. Image 2 is the final subject. The video must clearly begin with Person 1 from Image 1 and end with Person 2 from Image 2.
+
+Both people must appear as if they are in the same room, sharing one continuous environment. Use the background, room, and lighting from Image 1 as the main environment for the entire video. Person 2 must also appear in that same room, with the same background and lighting, so it feels like both people are standing in one shared space.
+
+For the first 2 seconds, keep the camera fully focused only on Person 1 in a close-up shot, facing the camera naturally. During these 2 seconds, Person 1 should not look like a static photo — she should appear alive, with subtle natural motion such as blinking, slight breathing, tiny facial movement, and very small natural head motion.
+
+Keep Person 1’s facial expression close to the expression in Image 1. Do not make Person 1 open her mouth. Her mouth should remain closed, with a calm and natural expression. When Person 2’s hand touches her, Person 1 may show only a very slight natural reaction, such as a tiny eye movement or a minimal facial response, while keeping the overall expression soft and close to the original photo.
+
+After 2 seconds, the camera smoothly pans horizontally to the right for about 1 second, revealing Person 2 in their own position.
+
+As the camera starts moving right, Person 2’s hand briefly enters the frame and gently touches Person 1’s shoulder, or lightly touches Person 1’s arm/hand in a natural way, before the camera continues to Person 2.
+
+Then keep the camera on Person 2 for the remaining time. The final frame must clearly show Person 2 from Image 2, with the same room background from Image 1 still visible behind them.
+
+Person 2 must be exactly the same person as in Image 2: same face, same facial structure, same hairstyle, same identity. Do not generate a random or similar-looking person.
+
+Hands must be clean and realistic, with correct anatomy, natural finger shape, no extra fingers, and no visual artifacts.
+
+The camera movement must be only a smooth horizontal pan to the right. No cuts, no morphing, no replacement, no zoom, no vertical movement, no diagonal movement, and no background change.
+
+High realism, consistent identity, same shared room, same lighting, same environment, no face distortion, no hand distortion, no unknown person, no artifacts.`;
 
 const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || "";
 const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || "";
@@ -147,6 +175,7 @@ const SUBSCRIPTION_CHECK_PAYLOAD = "check_subscription";
 // Пейлоады для основного меню
 const MENU_CREATE_PHOTO_PAYLOAD = "menu_create_photo";
 const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
+const MENU_CREATE_FAMILY_VIDEO_PAYLOAD = "menu_create_family_video";
 const MENU_RESTORE_PHOTO_PAYLOAD = "menu_restore_photo";
 const MENU_PREMIUM_PAYLOAD = "menu_premium";
 const MENU_BACK_PAYLOAD = "menu_back";
@@ -204,6 +233,48 @@ function shouldRegisterBotUser(userId) {
 }
 
 const userImageModes = new Map();
+
+const userFamilyVideoDrafts = new Map();
+const FAMILY_VIDEO_DRAFT_TTL_MS = Number(
+  process.env.FAMILY_VIDEO_DRAFT_TTL_MS || 20 * 60_000
+);
+
+function getFamilyVideoDraft(userId) {
+  const key = String(userId || "unknown");
+  const draft = userFamilyVideoDrafts.get(key);
+
+  if (!draft) return null;
+
+  if (Date.now() - draft.createdAt > FAMILY_VIDEO_DRAFT_TTL_MS) {
+    userFamilyVideoDrafts.delete(key);
+    return null;
+  }
+
+  return draft;
+}
+
+function setFamilyVideoDraft(userId, startImage) {
+  const key = String(userId || "unknown");
+
+  userFamilyVideoDrafts.set(key, {
+    startImage,
+    createdAt: Date.now()
+  });
+}
+
+function clearFamilyVideoDraft(userId) {
+  userFamilyVideoDrafts.delete(String(userId || "unknown"));
+}
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [userId, draft] of userFamilyVideoDrafts.entries()) {
+    if (now - draft.createdAt > FAMILY_VIDEO_DRAFT_TTL_MS) {
+      userFamilyVideoDrafts.delete(userId);
+    }
+  }
+}, 10 * 60_000).unref?.();
 
 function setUserImageMode(userId, mode) {
   userImageModes.set(String(userId || "unknown"), mode);
@@ -2057,7 +2128,7 @@ async function createYooKassaMusicPayment(userId) {
   return payment;
 }
 
-async function createYooKassaVideoPayment(userId) {
+async function createYooKassaVideoPayment(userId, mode = "") {
   if (!dbPool) {
     throw new Error("DATABASE_URL is required for video payments");
   }
@@ -2067,6 +2138,7 @@ async function createYooKassaVideoPayment(userId) {
   }
 
   const key = getUserRequestKey(userId);
+  const cleanMode = String(mode || "").trim();
 
   const price = Number(VIDEO_PRICE_RUB || 59);
   const priceValue = price.toFixed(2);
@@ -2106,16 +2178,17 @@ async function createYooKassaVideoPayment(userId) {
       },
       confirmation: {
         type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/video/return?user_id=${encodeURIComponent(key)}`
+        return_url: `${APP_PUBLIC_URL}/video/return?user_id=${encodeURIComponent(key)}${cleanMode ? `&mode=${encodeURIComponent(cleanMode)}` : ""}`
       },
       capture: true,
       description: `${description} для user ${key}`,
-      metadata: {
-        user_id: key,
-        bot_key: BOT_KEY,
-        product: VIDEO_PRODUCT_CODE,
-        type: VIDEO_PRODUCT_CODE
-      },
+metadata: {
+  user_id: key,
+  bot_key: BOT_KEY,
+  product: VIDEO_PRODUCT_CODE,
+  type: VIDEO_PRODUCT_CODE,
+  mode: cleanMode
+},
       receipt
     }
   });
@@ -2888,6 +2961,13 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
+        text: "👨‍👩‍👧‍👦 Оживить семью",
+        payload: MENU_CREATE_FAMILY_VIDEO_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
         text: "🎬 Оживить фото",
         payload: MENU_CREATE_VIDEO_PAYLOAD
       }
@@ -2895,15 +2975,15 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🛍️ Создать карточку товара WB/Ozon",
-        payload: MENU_PRODUCT_CARD_PAYLOAD
+        text: "🎵 Создать музыку",
+        payload: MENU_CREATE_MUSIC_PAYLOAD
       }
     ],
     [
       {
         type: "callback",
-        text: "🎵 Создать музыку",
-        payload: MENU_CREATE_MUSIC_PAYLOAD
+        text: "🛍️ Создать карточку товара WB/Ozon",
+        payload: MENU_PRODUCT_CARD_PAYLOAD
       }
     ],
     [
@@ -3197,6 +3277,97 @@ async function sendCreateVideoHelp(target, userId) {
 
   return sendMaxMessageWithAttachments(target, text, [
     keyboardAttachment
+  ]);
+}
+
+async function sendFamilyVideoHelp(target, userId) {
+  const videoAccess = await getVideoAccessForUser(userId);
+  const buyUrl = buildVideoBuyUrl(userId, VIDEO_MODE_FAMILY_PAYMENT);
+
+  if (videoAccess.allowed) {
+    setUserImageMode(userId, IMAGE_MODE_FAMILY_VIDEO);
+    clearFamilyVideoDraft(userId);
+
+    const accessText =
+      videoAccess.source === "premium"
+        ? `У вас доступно Premium-видео сегодня: **${videoAccess.premiumVideosLeft}**.`
+        : `У вас доступно оплаченных видео: **${videoAccess.credits}**.`;
+
+    return sendMaxMessageWithAttachments(
+      target,
+      [
+        "👨‍👩‍👧‍👦 **Режим «Оживить семью» включён.**",
+        "",
+        accessText,
+        "",
+        "Теперь отправьте **2 фото**:",
+        "1. первое фото — начальный кадр / Person 1;",
+        "2. второе фото — end image / Person 2.",
+        "",
+        "Можно отправить **оба фото одним сообщением**.",
+        "Если отправите одно фото — я сохраню его как начальный кадр и попрошу второе.",
+        "",
+        "Любой текст будет проигнорирован.",
+        "",
+        "Видео будет создано через **Seedance Lite**, длительность **6 секунд**, качество **480p**."
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: buildBackButtonKeyboard()
+          }
+        }
+      ]
+    );
+  }
+
+  let text =
+    "👨‍👩‍👧‍👦 **Оживить семью**\n\n" +
+    `Стоимость: **${Number(VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно видео.\n\n` +
+    "После оплаты вы сможете отправить 2 фото: начальный кадр и end image.\n\n" +
+    "Бот создаст вертикальное видео на 6 секунд: камера начнёт с первого человека, плавно перейдёт вправо и закончит на втором человеке.\n\n";
+
+  if (videoAccess.premium) {
+    text +=
+      "Ваше **Premium-видео на сегодня уже использовано**.\n" +
+      "Чтобы сделать ещё одно видео сегодня, можно купить отдельный видео-кредит.\n\n";
+  } else {
+    text +=
+      "После оплаты вы получите **1 видео-кредит**.\n\n";
+  }
+
+  if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY || !FAL_KEY) {
+    text += "⚠️ Оплата или FAL пока не настроены. Проверьте APP_PUBLIC_URL, YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY и FAL_KEY.";
+  }
+
+  const buttons = [];
+
+  if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY && FAL_KEY) {
+    buttons.push([
+      {
+        type: "link",
+        text: `💳 Купить видео — ${Number(VIDEO_PRICE_RUB).toFixed(0)} ₽`,
+        url: buyUrl
+      }
+    ]);
+  }
+
+  buttons.push([
+    {
+      type: "callback",
+      text: "⬅️ Назад к меню",
+      payload: MENU_BACK_PAYLOAD
+    }
+  ]);
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons
+      }
+    }
   ]);
 }
 
@@ -4181,8 +4352,9 @@ function collectUrls(value, urls = []) {
   return urls;
 }
 
-function extractIncomingImageUrl(update) {
+function extractIncomingImageUrls(update) {
   const attachments = update?.message?.body?.attachments || [];
+  const imageUrls = [];
 
   for (const attachment of attachments) {
     const type = String(attachment?.type || "").toLowerCase();
@@ -4195,10 +4367,14 @@ function extractIncomingImageUrl(update) {
       urls.find((url) => /\.(png|jpe?g|webp|gif|bmp|tiff?|heic)(\?|#|$)/i.test(url)) ||
       urls[0];
 
-    if (imageUrl) return imageUrl;
+    if (imageUrl) imageUrls.push(imageUrl);
   }
 
-  return "";
+  return imageUrls;
+}
+
+function extractIncomingImageUrl(update) {
+  return extractIncomingImageUrls(update)[0] || "";
 }
 
 function guessMimeFromUrl(url) {
@@ -4653,6 +4829,74 @@ async function makeVideoFromFalSeedance({ inputImage }) {
   return downloadBufferFromUrl(videoUrl, "video/");
 }
 
+async function makeFamilyVideoFromFalSeedance({ startImage, endImage }) {
+  const [startImageUrl, endImageUrl] = await Promise.all([
+    uploadImageToFalCdn(startImage),
+    uploadImageToFalCdn(endImage)
+  ]);
+
+  const submitResult = await falRequest(FAL_SEEDANCE_IMAGE_TO_VIDEO_URL, {
+    method: "POST",
+    body: {
+      prompt: FAMILY_VIDEO_PROMPT,
+      image_url: startImageUrl,
+      end_image_url: endImageUrl,
+      duration: "6",
+      resolution: "480p",
+      aspect_ratio: "9:16",
+      camera_fixed: false,
+      enable_safety_checker: true
+    }
+  });
+
+  let videoUrl = extractFalVideoUrl(submitResult);
+
+  if (!videoUrl) {
+    const statusUrl = String(submitResult?.status_url || "").trim();
+    const responseUrl = String(submitResult?.response_url || "").trim();
+
+    if (!statusUrl || !responseUrl) {
+      throw new Error(`FAL queue response missing status_url/response_url: ${JSON.stringify(submitResult)}`);
+    }
+
+    const startedAt = Date.now();
+
+    while (Date.now() - startedAt < FAL_QUEUE_TIMEOUT_MS) {
+      await sleep(FAL_QUEUE_POLL_INTERVAL_MS);
+
+      const statusResult = await falRequest(statusUrl, {
+        method: "GET"
+      });
+
+      const status = String(statusResult?.status || "").toUpperCase();
+
+      if (["COMPLETED", "COMPLETE", "DONE", "SUCCEEDED"].includes(status)) {
+        const result = await falRequest(responseUrl, {
+          method: "GET"
+        });
+
+        videoUrl = extractFalVideoUrl(result);
+
+        if (!videoUrl) {
+          throw new Error(`FAL result has no video.url: ${JSON.stringify(result).slice(0, 1200)}`);
+        }
+
+        break;
+      }
+
+      if (["FAILED", "ERROR", "CANCELLED", "CANCELED"].includes(status)) {
+        throw new Error(`FAL generation failed: ${JSON.stringify(statusResult).slice(0, 1200)}`);
+      }
+    }
+  }
+
+  if (!videoUrl) {
+    throw new Error("FAL family video generation timeout");
+  }
+
+  return downloadBufferFromUrl(videoUrl, "video/");
+}
+
 async function uploadVideoToMaxAndGetToken(videoBuffer) {
   if (!videoBuffer || !videoBuffer.length) throw new Error("Video buffer is empty");
 
@@ -4715,11 +4959,20 @@ function isVideoMode(userId) {
   return getUserImageMode(userId) === IMAGE_MODE_VIDEO;
 }
 
-function buildVideoBuyUrl(userId) {
+function isFamilyVideoMode(userId) {
+  return getUserImageMode(userId) === IMAGE_MODE_FAMILY_VIDEO;
+}
+
+function buildVideoBuyUrl(userId, mode = "") {
   if (!APP_PUBLIC_URL) return "";
 
   const url = new URL(`${APP_PUBLIC_URL}/video/buy`);
   url.searchParams.set("user_id", String(userId || ""));
+
+  const cleanMode = String(mode || "").trim();
+  if (cleanMode) {
+    url.searchParams.set("mode", cleanMode);
+  }
 
   return url.toString();
 }
@@ -5335,6 +5588,144 @@ async function handleVideoRequest(update, target, userText, incomingImageUrl, us
   await maybeSendRandomNudgeAfterGeneration(target, userId);
 }
 
+async function finishVideoBillingAfterSuccess(target, userId, videoAccess, family = false) {
+  if (videoAccess.source === "premium") {
+    await incrementRequestCount(userId, "videos");
+
+    const countsAfter = await getUserRequestCounts(userId);
+    const limitsAfter = await getUserDailyLimits(userId);
+
+    const premiumVideosLeft = Math.max(
+      0,
+      Number(limitsAfter.videos || 0) - Number(countsAfter.videos || 0)
+    );
+
+    await sendMaxMessage(
+      target,
+      [
+        family
+          ? "✅ **Семейное видео создано за счёт Premium.**"
+          : "✅ **Видео создано за счёт Premium.**",
+        "",
+        `Premium-видео на сегодня осталось: **${premiumVideosLeft}**.`,
+        "",
+        premiumVideosLeft > 0
+          ? "Можете создать ещё одно Premium-видео сегодня."
+          : "Если нужно ещё видео сегодня — купите отдельный видео-кредит."
+      ].join("\n")
+    );
+
+    await maybeSendRandomNudgeAfterGeneration(target, userId);
+    return;
+  }
+
+  const consumeResult = await consumeVideoCredit(userId);
+
+  if (!consumeResult.consumed) {
+    console.warn(`Video credit was not consumed for user ${userId}`);
+  }
+
+  await sendMaxMessage(
+    target,
+    [
+      family
+        ? "✅ **Семейное видео создано.**"
+        : "✅ **Видео создано.**",
+      "",
+      `Осталось оплаченных видео: **${consumeResult.creditsLeft || 0}**.`,
+      "",
+      family
+        ? "Для нового семейного видео нажмите «👨‍👩‍👧‍👦 Оживить семью» в меню."
+        : "Для нового видео нажмите «🎬 Оживить фото» в меню и купите ещё один кредит."
+    ].join("\n")
+  );
+
+  await maybeSendRandomNudgeAfterGeneration(target, userId);
+}
+
+async function handleFamilyVideoRequest(update, target, incomingImageUrls, userId = target.id) {
+  const imageUrls = Array.isArray(incomingImageUrls) ? incomingImageUrls.filter(Boolean) : [];
+
+  if (!imageUrls.length) {
+    await sendMaxMessage(
+      target,
+      "👨‍👩‍👧‍👦 Режим «Оживить семью» включён. Отправьте **2 фото**: начальный кадр и end image. Текст не нужен."
+    );
+    return;
+  }
+
+  const videoAccess = await getVideoAccessForUser(userId);
+
+  if (!videoAccess.allowed) {
+    clearFamilyVideoDraft(userId);
+    clearUserImageMode(userId);
+    await sendFamilyVideoHelp(target, userId);
+    return;
+  }
+
+  let startImage = null;
+  let endImage = null;
+
+  if (imageUrls.length >= 2) {
+    startImage = await downloadIncomingImage(imageUrls[0]);
+    endImage = await downloadIncomingImage(imageUrls[1]);
+    clearFamilyVideoDraft(userId);
+  } else {
+    const draft = getFamilyVideoDraft(userId);
+
+    if (!draft?.startImage) {
+      startImage = await downloadIncomingImage(imageUrls[0]);
+      setFamilyVideoDraft(userId, startImage);
+
+      await sendMaxMessage(
+        target,
+        [
+          "✅ Первый кадр сохранён.",
+          "",
+          "Теперь отправьте **второе фото** — это будет end image / Person 2.",
+          "",
+          "Текст можно не писать. Он будет проигнорирован."
+        ].join("\n")
+      );
+
+      return;
+    }
+
+    startImage = draft.startImage;
+    endImage = await downloadIncomingImage(imageUrls[0]);
+    clearFamilyVideoDraft(userId);
+  }
+
+  const status = await startDynamicStatus(target, "👨‍👩‍👧‍👦 Семейное видео создаётся");
+
+  try {
+    const videoBuffer = await makeFamilyVideoFromFalSeedance({
+      startImage,
+      endImage
+    });
+
+    await sendMaxVideo(
+      target,
+      [
+        "👨‍👩‍👧‍👦 **Готово. Семейное видео создано.**",
+        "",
+        "Видео создано на **6 секунд** через Seedance Lite.",
+        "",
+        "Текст пользователя не использовался — применён встроенный промт режима «Оживить семью»."
+      ].join("\n"),
+      videoBuffer
+    );
+
+    clearUserImageMode(userId);
+
+    await finishVideoBillingAfterSuccess(target, userId, videoAccess, true);
+  } finally {
+    await status.stop().catch((error) => {
+      console.warn("Failed to stop family video status:", error?.message || error);
+    });
+  }
+}
+
 async function handleUpdate(update) {
   const updateType = update?.update_type;
   const target = getReplyTarget(update);
@@ -5376,7 +5767,8 @@ if (shouldRegisterBotUser(broadcastUserId)) {
     const userText = getIncomingText(update);
     const callbackPayload = getCallbackPayload(update);
     const callbackId = getCallbackId(update);
-    const incomingImageUrl = extractIncomingImageUrl(update);
+    const incomingImageUrls = extractIncomingImageUrls(update);
+const incomingImageUrl = incomingImageUrls[0] || "";
 
     const isCallbackUpdate =
       updateType === "message_callback" ||
@@ -5465,6 +5857,14 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
   return;
 }
 
+  if (callbackPayload === MENU_CREATE_FAMILY_VIDEO_PAYLOAD) {
+  clearUserImageMode(userId);
+  clearFamilyVideoDraft(userId);
+
+  await sendFamilyVideoHelp(target, userId);
+  return;
+}
+
       // 5) Меню: Создать карточку товара
       if (callbackPayload === MENU_PRODUCT_CARD_PAYLOAD) {
         clearUserImageMode(userId);
@@ -5491,6 +5891,7 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
 // 6) Кнопка "Назад" — возвращаем к меню
 if (callbackPayload === MENU_BACK_PAYLOAD) {
   clearUserImageMode(userId);
+  clearFamilyVideoDraft(userId);
 
   answerMainMenu(callbackId, target).catch((error) => {
     console.error("answerMainMenu failed:", error?.message || error);
@@ -5674,6 +6075,35 @@ if (musicModeActive) {
 
   await status.stop();
   status = null;
+
+  return;
+}
+
+    const familyVideoModeActive = isFamilyVideoMode(userId);
+
+if (familyVideoModeActive) {
+  if (!incomingImageUrls.length) {
+    await sendMaxMessage(
+      target,
+      "👨‍👩‍👧‍👦 Режим «Оживить семью» включён. Отправьте **2 фото**: начальный кадр и end image. Текст не нужен."
+    );
+    return;
+  }
+
+  if (isUserBusy(userId)) {
+    await sendBusyWarningIfNeeded(target, userId, firstName);
+    return;
+  }
+
+  lockUserProcessing(userId);
+  processingLocked = true;
+
+  await handleFamilyVideoRequest(
+    update,
+    target,
+    incomingImageUrls,
+    userId
+  );
 
   return;
 }
@@ -5996,7 +6426,8 @@ app.get("/video/buy", async (req, res) => {
       return;
     }
 
-    const payment = await createYooKassaVideoPayment(userId);
+    const mode = String(req.query.mode || "").trim();
+const payment = await createYooKassaVideoPayment(userId, mode);
     const confirmationUrl = payment?.confirmation?.confirmation_url;
 
     if (!confirmationUrl) {
@@ -6145,11 +6576,15 @@ async function handleYooKassaWebhook(req, res) {
 
       if (product === VIDEO_PRODUCT_CODE) {
   const result = await applyVideoPayment(payment);
+        const videoPaymentMode = String(metadata.mode || "").trim();
+        
 
   console.log("Video payment apply result:", result);
 
-  if (result.granted && result.userId) {
-    setUserImageMode(result.userId, IMAGE_MODE_VIDEO);
+if (result.granted && result.userId) {
+  if (videoPaymentMode === VIDEO_MODE_FAMILY_PAYMENT) {
+    setUserImageMode(result.userId, IMAGE_MODE_FAMILY_VIDEO);
+    clearFamilyVideoDraft(result.userId);
 
     await sendMaxMessage(
       {
@@ -6157,20 +6592,45 @@ async function handleYooKassaWebhook(req, res) {
         id: result.userId
       },
       [
-        "✅ **Оплата прошла. Оживление фото доступно.**",
+        "✅ **Оплата прошла. Режим «Оживить семью» открыт.**",
         "",
-        "Теперь просто отправьте **фото человека**.",
+        "Теперь отправьте **2 фото**:",
+        "1. начальный кадр / Person 1;",
+        "2. end image / Person 2.",
         "",
-        "Текст можно не писать. Если отправите фото с текстом — текст будет проигнорирован.",
+        "Можно отправить оба фото одним сообщением.",
+        "Если отправите одно фото — я сохраню его как первый кадр и попрошу второе.",
         "",
-        "Я сделаю видео на **5 секунд** через Seedance Lite: человек будет смотреть в камеру, слегка улыбаться и мягко махать рукой."
+        "Любой текст будет проигнорирован.",
+        "",
+        "Видео будет создано на **6 секунд** через Seedance Lite, качество **480p**."
       ].join("\n")
     ).catch((error) => {
-      console.warn("Failed to send video success message:", error?.message || error);
+      console.warn("Failed to send family video success message:", error?.message || error);
     });
+
+    return;
   }
 
-  return;
+  setUserImageMode(result.userId, IMAGE_MODE_VIDEO);
+
+  await sendMaxMessage(
+    {
+      type: "user_id",
+      id: result.userId
+    },
+    [
+      "✅ **Оплата прошла. Оживление фото доступно.**",
+      "",
+      "Теперь просто отправьте **фото человека**.",
+      "",
+      "Текст можно не писать. Если отправите фото с текстом — текст будет проигнорирован.",
+      "",
+      "Я сделаю видео на **5 секунд** через Seedance Lite: человек будет смотреть в камеру, слегка улыбаться и мягко махать рукой."
+    ].join("\n")
+  ).catch((error) => {
+    console.warn("Failed to send video success message:", error?.message || error);
+  });
 }
       
 
