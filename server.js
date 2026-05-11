@@ -7117,7 +7117,6 @@ app.post("/webhook", (req, res) => {
 
 resetDailyLimits();
 
-
 Promise.all([
   initBroadcastUsersDb(),
   initLimitsDb(),
@@ -7126,23 +7125,23 @@ Promise.all([
   .catch((error) => {
     console.warn("DB init failed:", error?.message || error);
   })
-  
-.finally(() => {
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`MAX OpenAI bot is running on port ${PORT}`);
+  .finally(() => {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`MAX OpenAI bot is running on port ${PORT}`);
 
-setTimeout(() => {
-  if (VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
-    getVideoExampleMaxToken().catch((error) => {
-      console.warn("Video example warmup failed:", error?.message || error);
+      setTimeout(() => {
+        if (VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
+          getVideoExampleMaxToken().catch((error) => {
+            console.warn("Video example warmup failed:", error?.message || error);
+          });
+        }
+
+        if (FAMILY_VIDEO_EXAMPLE_URL && !cachedFamilyVideoExampleToken) {
+          getFamilyVideoExampleMaxToken().catch((error) => {
+            console.warn("Family video example warmup failed:", error?.message || error);
+          });
+        }
+      }, 2000).unref?.();
     });
-  }
-
-  if (FAMILY_VIDEO_EXAMPLE_URL && !cachedFamilyVideoExampleToken) {
-    getFamilyVideoExampleMaxToken().catch((error) => {
-      console.warn("Family video example warmup failed:", error?.message || error);
-    });
-  }
-}, 2000).unref?.();
-
+  });
   
