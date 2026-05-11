@@ -3663,11 +3663,11 @@ const buyUrl = buildFamilyVideoBuyUrl(userId);
     );
   }
 
-  let text =
-    "👨‍👩‍👧‍👦 **Оживить семью**\n\n" +
-    `Стоимость: **${Number(FAMILY_VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно семейное видео.\n\n`
-    "После оплаты вы сможете отправить 2 фото: начальный кадр и end image.\n\n" +
-    "Бот создаст вертикальное видео на 6 секунд: камера начнёт с первого человека, плавно перейдёт вправо и закончит на втором человеке.\n\n";
+let text =
+  "👨‍👩‍👧‍👦 **Оживить семью**\n\n" +
+  `Стоимость: **${Number(FAMILY_VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно семейное видео.\n\n` +
+  "После оплаты вы сможете отправить 2 фото: начальный кадр и end image.\n\n" +
+  "Бот создаст вертикальное видео на 6 секунд: камера начнёт с первого человека, плавно перейдёт вправо и закончит на втором человеке.\n\n";
 
   if (videoAccess.premium) {
     text +=
@@ -3675,7 +3675,7 @@ const buyUrl = buildFamilyVideoBuyUrl(userId);
       "Чтобы сделать ещё одно видео сегодня, можно купить отдельный видео-кредит.\n\n";
   } else {
     text +=
-      "После оплаты вы получите **1 видео-кредит**.\n\n";
+      "После оплаты вы получите **1 семейный видео-кредит**.\n\n";
   }
 
   if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY || !FAL_KEY) {
@@ -6810,8 +6810,17 @@ app.get("/video/buy", async (req, res) => {
       return;
     }
 
-    const mode = String(req.query.mode || "").trim();
-const payment = await createYooKassaVideoPayment(userId, mode);
+const mode = String(req.query.mode || "").trim();
+
+if (mode === VIDEO_MODE_FAMILY_PAYMENT) {
+  res.redirect(
+    302,
+    `/family-video/buy?user_id=${encodeURIComponent(userId)}`
+  );
+  return;
+}
+
+const payment = await createYooKassaVideoPayment(userId);
     const confirmationUrl = payment?.confirmation?.confirmation_url;
 
     if (!confirmationUrl) {
@@ -6998,7 +7007,7 @@ async function handleYooKassaWebhook(req, res) {
   return;
 }
 
-      if (product === FAMILY_VIDEO_PRODUCT_CODE) {
+if (product === FAMILY_VIDEO_PRODUCT_CODE) {
   const result = await applyFamilyVideoPayment(payment);
 
   console.log("Family video payment apply result:", result);
@@ -7027,24 +7036,23 @@ async function handleYooKassaWebhook(req, res) {
         "Видео будет создано на **6 секунд** через Seedance Lite, качество **720p**."
       ].join("\n")
     ).catch((error) => {
-      console.warn("Failed to send family video success message:", error?.message || error);
+      console.warn(
+        "Failed to send family video success message:",
+        error?.message || error
+      );
     });
   }
 
   return;
 }
 
-      if (product === VIDEO_PRODUCT_CODE) {
+if (product === VIDEO_PRODUCT_CODE) {
   const result = await applyVideoPayment(payment);
-        const videoPaymentMode = String(metadata.mode || "").trim();
-        
 
   console.log("Video payment apply result:", result);
 
-if (result.granted && result.userId) {
-  if (videoPaymentMode === VIDEO_MODE_FAMILY_PAYMENT) {
-    setUserImageMode(result.userId, IMAGE_MODE_FAMILY_VIDEO);
-    clearFamilyVideoDraft(result.userId);
+  if (result.granted && result.userId) {
+    setUserImageMode(result.userId, IMAGE_MODE_VIDEO);
 
     await sendMaxMessage(
       {
@@ -7052,53 +7060,30 @@ if (result.granted && result.userId) {
         id: result.userId
       },
       [
-        "✅ **Оплата прошла. Режим «Оживить семью» открыт.**",
+        "✅ **Оплата прошла. Оживление фото доступно.**",
         "",
-        "Теперь отправьте **2 фото**:",
-        "1. начальный кадр / Person 1;",
-        "2. end image / Person 2.",
+        "Теперь просто отправьте **фото человека**.",
         "",
-        "Можно отправить оба фото одним сообщением.",
-        "Если отправите одно фото — я сохраню его как первый кадр и попрошу второе.",
+        "Текст можно не писать. Если отправите фото с текстом — текст будет проигнорирован.",
         "",
-        "Любой текст будет проигнорирован.",
-        "",
-        "Видео будет создано на **6 секунд** через Seedance Lite, качество **720p**."
+        "Я сделаю видео на **5 секунд** через Seedance Lite: человек будет смотреть в камеру, слегка улыбаться и мягко махать рукой."
       ].join("\n")
     ).catch((error) => {
-      console.warn("Failed to send family video success message:", error?.message || error);
+      console.warn(
+        "Failed to send video success message:",
+        error?.message || error
+      );
     });
-
-    return;
   }
 
-  setUserImageMode(result.userId, IMAGE_MODE_VIDEO);
-
-  await sendMaxMessage(
-    {
-      type: "user_id",
-      id: result.userId
-    },
-    [
-      "✅ **Оплата прошла. Оживление фото доступно.**",
-      "",
-      "Теперь просто отправьте **фото человека**.",
-      "",
-      "Текст можно не писать. Если отправите фото с текстом — текст будет проигнорирован.",
-      "",
-      "Я сделаю видео на **5 секунд** через Seedance Lite: человек будет смотреть в камеру, слегка улыбаться и мягко махать рукой."
-    ].join("\n")
-  ).catch((error) => {
-    console.warn("Failed to send video success message:", error?.message || error);
-  });
+  return;
 }
-      
 
-      console.warn("Unknown YooKassa product:", {
-        paymentId,
-        product,
-        metadata
-      });
+console.warn("Unknown YooKassa product:", {
+  paymentId,
+  product,
+  metadata
+});
     } catch (error) {
       console.error("YooKassa webhook processing failed:", error);
     }
