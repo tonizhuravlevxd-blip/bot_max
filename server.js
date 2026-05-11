@@ -71,6 +71,11 @@ const FAL_QUEUE_POLL_INTERVAL_MS = Number(process.env.FAL_QUEUE_POLL_INTERVAL_MS
 
 const VIDEO_PRICE_RUB = process.env.VIDEO_PRICE_RUB || "59.00";
 const VIDEO_PRODUCT_CODE = "photo_animation_video";
+
+const FAMILY_VIDEO_PRICE_RUB =
+  process.env.FAMILY_VIDEO_PRICE_RUB || "149.00";
+
+const FAMILY_VIDEO_PRODUCT_CODE = "family_photo_animation_video";
 const VIDEO_EXAMPLE_URL =
   process.env.VIDEO_EXAMPLE_URL ||
   "https://v3b.fal.media/files/b/0a994a93/nP39rGAe_VTIOtxt4ZoPB_video.mp4";
@@ -582,6 +587,22 @@ await dbPool.query(`
     CREATE INDEX IF NOT EXISTS idx_max_bot_premium_users_active
     ON max_bot_premium_users (user_id, bot_key, premium_until)
   `);
+
+  await dbPool.query(`
+  CREATE TABLE IF NOT EXISTS max_bot_family_video_credits (
+    user_id TEXT NOT NULL,
+    bot_key TEXT NOT NULL,
+    credits INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, bot_key)
+  )
+`);
+
+await dbPool.query(`
+  CREATE INDEX IF NOT EXISTS idx_max_bot_family_video_credits_user_bot
+  ON max_bot_family_video_credits (user_id, bot_key)
+`);
 
   console.log("Premium DB initialized");
 }
@@ -1453,6 +1474,68 @@ async function consumeVideoCredit(userId) {
   };
 }
 
+async function getFamilyVideoCredits(userId) {
+  if (!dbPool) return 0;
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      SELECT credits
+      FROM max_bot_family_video_credits
+      WHERE user_id = $1 AND bot_key = $2
+      LIMIT 1
+    `,
+    [key, BOT_KEY]
+  );
+
+  return Number(result.rows[0]?.credits || 0);
+}
+
+async function consumeFamilyVideoCredit(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for family video credits");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      UPDATE max_bot_family_video_credits
+      SET credits = credits - 1,
+          updated_at = NOW()
+      WHERE user_id = $1
+        AND bot_key = $2
+        AND credits > 0
+      RETURNING credits
+    `,
+    [key, BOT_KEY]
+  );
+
+  return {
+    consumed: Boolean(result.rows.length),
+    creditsLeft: Number(result.rows[0]?.credits || 0)
+  };
+}
+
+async function getFamilyVideoAccessForUser(userId) {
+  const credits = await getFamilyVideoCredits(userId);
+
+  if (credits > 0) {
+    return {
+      allowed: true,
+      source: "family_credit",
+      credits
+    };
+  }
+
+  return {
+    allowed: false,
+    source: "none",
+    credits: 0
+  };
+}
+
 // Проверяем, достигнут ли лимит по типу
 async function isRequestLimitReached(userId, type, limit) {
   const counts = await getUserRequestCounts(userId);
@@ -2244,6 +2327,107 @@ metadata: {
   return payment;
 }
 
+async function createYooKassaFamilyVideoPayment(userId) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for family video payments");
+  }
+
+  if (!APP_PUBLIC_URL) {
+    throw new Error("APP_PUBLIC_URL is not set");
+  }
+
+  const key = getUserRequestKey(userId);
+
+  const price = Number(FAMILY_VIDEO_PRICE_RUB || 149);
+  const priceValue = price.toFixed(2);
+
+  const description = "Оживить семью AI";
+
+  const receipt = {
+    customer: {
+      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
+    },
+    items: [
+      {
+        description,
+        quantity: "1.00",
+        amount: {
+          value: priceValue,
+          currency: "RUB"
+        },
+        vat_code: YOOKASSA_VAT_CODE,
+        payment_mode: "full_payment",
+        payment_subject: "service"
+      }
+    ]
+  };
+
+  if (YOOKASSA_TAX_SYSTEM_CODE) {
+    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
+  }
+
+  const payment = await yookassaRequest("/payments", {
+    method: "POST",
+    idempotenceKey: crypto.randomUUID(),
+    body: {
+      amount: {
+        value: priceValue,
+        currency: "RUB"
+      },
+      confirmation: {
+        type: "redirect",
+        return_url: `${APP_PUBLIC_URL}/family-video/return?user_id=${encodeURIComponent(key)}`
+      },
+      capture: true,
+      description: `${description} для user ${key}`,
+      metadata: {
+        user_id: key,
+        bot_key: BOT_KEY,
+        product: FAMILY_VIDEO_PRODUCT_CODE,
+        type: FAMILY_VIDEO_PRODUCT_CODE
+      },
+      receipt
+    }
+  });
+
+  if (!payment?.id) {
+    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
+  }
+
+  await dbPool.query(
+    `
+      INSERT INTO max_bot_premium_payments (
+        payment_id,
+        user_id,
+        bot_key,
+        status,
+        amount,
+        currency,
+        raw
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+      ON CONFLICT (payment_id)
+      DO UPDATE SET
+        status = EXCLUDED.status,
+        amount = EXCLUDED.amount,
+        currency = EXCLUDED.currency,
+        raw = EXCLUDED.raw,
+        updated_at = NOW()
+    `,
+    [
+      String(payment.id),
+      key,
+      BOT_KEY,
+      String(payment.status || "pending"),
+      String(payment.amount?.value || priceValue),
+      String(payment.amount?.currency || "RUB"),
+      JSON.stringify(payment)
+    ]
+  );
+
+  return payment;
+}
+
 async function getYooKassaPayment(paymentId) {
   return yookassaRequest(`/payments/${encodeURIComponent(paymentId)}`, {
     method: "GET"
@@ -2676,6 +2860,115 @@ async function applyVideoPayment(payment) {
         ON CONFLICT (user_id, bot_key)
         DO UPDATE SET
           credits = max_bot_video_credits.credits + 1,
+          updated_at = NOW()
+        RETURNING credits
+      `,
+      [userId, BOT_KEY]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      granted: true,
+      userId,
+      credits: Number(creditResult.rows[0]?.credits || 0)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function applyFamilyVideoPayment(payment) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for family video payments");
+  }
+
+  const paymentId = String(payment?.id || "").trim();
+  const status = String(payment?.status || "").trim();
+  const paid = payment?.paid === true;
+  const amountValue = String(payment?.amount?.value || "");
+  const currency = String(payment?.amount?.currency || "");
+  const metadata = payment?.metadata || {};
+
+  const userId = String(metadata.user_id || "").trim();
+  const botKey = String(metadata.bot_key || "").trim();
+  const product = String(metadata.product || "").trim();
+
+  if (!paymentId || status !== "succeeded" || !paid) {
+    return { granted: false, reason: "payment_not_succeeded" };
+  }
+
+  if (!userId || botKey !== BOT_KEY || product !== FAMILY_VIDEO_PRODUCT_CODE) {
+    return { granted: false, reason: "metadata_mismatch" };
+  }
+
+  if (currency !== "RUB" || Number(amountValue) < Number(FAMILY_VIDEO_PRICE_RUB)) {
+    return { granted: false, reason: "amount_mismatch" };
+  }
+
+  const client = await dbPool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const existingPayment = await client.query(
+      `
+        SELECT status
+        FROM max_bot_premium_payments
+        WHERE payment_id = $1
+        FOR UPDATE
+      `,
+      [paymentId]
+    );
+
+    const previousStatus = String(existingPayment.rows[0]?.status || "");
+
+    await client.query(
+      `
+        INSERT INTO max_bot_premium_payments (
+          payment_id,
+          user_id,
+          bot_key,
+          status,
+          amount,
+          currency,
+          raw
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+        ON CONFLICT (payment_id)
+        DO UPDATE SET
+          status = EXCLUDED.status,
+          amount = EXCLUDED.amount,
+          currency = EXCLUDED.currency,
+          raw = EXCLUDED.raw,
+          updated_at = NOW()
+      `,
+      [
+        paymentId,
+        userId,
+        BOT_KEY,
+        status,
+        amountValue,
+        currency,
+        JSON.stringify(payment)
+      ]
+    );
+
+    if (previousStatus === "succeeded") {
+      await client.query("COMMIT");
+      return { granted: false, reason: "already_granted", userId };
+    }
+
+    const creditResult = await client.query(
+      `
+        INSERT INTO max_bot_family_video_credits (user_id, bot_key, credits)
+        VALUES ($1, $2, 1)
+        ON CONFLICT (user_id, bot_key)
+        DO UPDATE SET
+          credits = max_bot_family_video_credits.credits + 1,
           updated_at = NOW()
         RETURNING credits
       `,
@@ -3329,8 +3622,8 @@ async function sendCreateVideoHelp(target, userId) {
 }
 
 async function sendFamilyVideoHelp(target, userId) {
-  const videoAccess = await getVideoAccessForUser(userId);
-  const buyUrl = buildVideoBuyUrl(userId, VIDEO_MODE_FAMILY_PAYMENT);
+const videoAccess = await getFamilyVideoAccessForUser(userId);
+const buyUrl = buildFamilyVideoBuyUrl(userId);
 
   if (videoAccess.allowed) {
     setUserImageMode(userId, IMAGE_MODE_FAMILY_VIDEO);
@@ -3339,7 +3632,7 @@ async function sendFamilyVideoHelp(target, userId) {
     const accessText =
       videoAccess.source === "premium"
         ? `У вас доступно Premium-видео сегодня: **${videoAccess.premiumVideosLeft}**.`
-        : `У вас доступно оплаченных видео: **${videoAccess.credits}**.`;
+        : `У вас доступно оплаченных семейных видео: **${videoAccess.credits}**.`;
 
     return sendMaxMessageWithAttachments(
       target,
@@ -3349,8 +3642,8 @@ async function sendFamilyVideoHelp(target, userId) {
         accessText,
         "",
         "Теперь отправьте **2 фото**:",
-        "1. первое фото — начальный кадр / Person 1;",
-        "2. второе фото — end image / Person 2.",
+        "1. *первое фото — начальный кадр / Person 1 (фото близко лучше 1 человек);*",
+        "2. *второе фото — end image / Person 2. (фото близко лучше 1 человек)*",
         "",
         "Можно отправить **оба фото одним сообщением**.",
         "Если отправите одно фото — я сохраню его как начальный кадр и попрошу второе.",
@@ -3372,7 +3665,7 @@ async function sendFamilyVideoHelp(target, userId) {
 
   let text =
     "👨‍👩‍👧‍👦 **Оживить семью**\n\n" +
-    `Стоимость: **${Number(VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно видео.\n\n` +
+    `Стоимость: **${Number(FAMILY_VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно семейное видео.\n\n`
     "После оплаты вы сможете отправить 2 фото: начальный кадр и end image.\n\n" +
     "Бот создаст вертикальное видео на 6 секунд: камера начнёт с первого человека, плавно перейдёт вправо и закончит на втором человеке.\n\n";
 
@@ -3395,7 +3688,7 @@ async function sendFamilyVideoHelp(target, userId) {
     buttons.push([
       {
         type: "link",
-        text: `💳 Купить видео — ${Number(VIDEO_PRICE_RUB).toFixed(0)} ₽`,
+        text: `💳 Купить семейное видео — ${Number(FAMILY_VIDEO_PRICE_RUB).toFixed(0)} ₽`,
         url: buyUrl
       }
     ]);
@@ -3430,6 +3723,7 @@ if (token) {
 return sendMaxMessageWithAttachments(target, text, [
   keyboardAttachment
 ]);
+  }
 
 function isMusicMode(userId) {
   return getUserImageMode(userId) === IMAGE_MODE_MUSIC;
@@ -5037,6 +5331,15 @@ function buildVideoBuyUrl(userId, mode = "") {
   return url.toString();
 }
 
+function buildFamilyVideoBuyUrl(userId) {
+  if (!APP_PUBLIC_URL) return "";
+
+  const url = new URL(`${APP_PUBLIC_URL}/family-video/buy`);
+  url.searchParams.set("user_id", String(userId || ""));
+
+  return url.toString();
+}
+
 async function sendMaxVideo(target, text, videoBuffer) {
   const token = await uploadVideoToMaxAndGetToken(videoBuffer);
 
@@ -5703,6 +6006,27 @@ async function finishVideoBillingAfterSuccess(target, userId, videoAccess, famil
   await maybeSendRandomNudgeAfterGeneration(target, userId);
 }
 
+async function finishFamilyVideoBillingAfterSuccess(target, userId) {
+  const consumeResult = await consumeFamilyVideoCredit(userId);
+
+  if (!consumeResult.consumed) {
+    console.warn(`Family video credit was not consumed for user ${userId}`);
+  }
+
+  await sendMaxMessage(
+    target,
+    [
+      "✅ **Семейное видео создано.**",
+      "",
+      `Осталось оплаченных семейных видео: **${consumeResult.creditsLeft || 0}**.`,
+      "",
+      "Для нового семейного видео нажмите «👨‍👩‍👧‍👦 Оживить семью» в меню."
+    ].join("\n")
+  );
+
+  await maybeSendRandomNudgeAfterGeneration(target, userId);
+}
+
 async function handleFamilyVideoRequest(update, target, incomingImageUrls, userId = target.id) {
   const imageUrls = Array.isArray(incomingImageUrls) ? incomingImageUrls.filter(Boolean) : [];
 
@@ -5714,7 +6038,7 @@ async function handleFamilyVideoRequest(update, target, incomingImageUrls, userI
     return;
   }
 
-  const videoAccess = await getVideoAccessForUser(userId);
+  const videoAccess = await getFamilyVideoAccessForUser(userId);
 
   if (!videoAccess.allowed) {
     clearFamilyVideoDraft(userId);
@@ -5778,7 +6102,7 @@ async function handleFamilyVideoRequest(update, target, incomingImageUrls, userI
 
     clearUserImageMode(userId);
 
-    await finishVideoBillingAfterSuccess(target, userId, videoAccess, true);
+    await finishFamilyVideoBillingAfterSuccess(target, userId);
   } finally {
     await status.stop().catch((error) => {
       console.warn("Failed to stop family video status:", error?.message || error);
@@ -6518,6 +6842,46 @@ app.get("/video/return", (req, res) => {
     `);
 });
 
+app.get("/family-video/buy", async (req, res) => {
+  try {
+    const userId = String(req.query.user_id || "").trim();
+
+    if (!isValidUserIdForBroadcast(userId)) {
+      res.status(400).type("text/plain").send("Некорректный user_id.");
+      return;
+    }
+
+    const payment = await createYooKassaFamilyVideoPayment(userId);
+    const confirmationUrl = payment?.confirmation?.confirmation_url;
+
+    if (!confirmationUrl) {
+      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
+    }
+
+    res.redirect(302, confirmationUrl);
+  } catch (error) {
+    console.error("Family video payment create failed:", error);
+    res
+      .status(500)
+      .type("text/plain")
+      .send("Не удалось создать платеж за семейное видео. Вернитесь в бота и попробуйте позже.");
+  }
+});
+
+app.get("/family-video/return", (req, res) => {
+  res
+    .status(200)
+    .type("text/html; charset=utf-8")
+    .send(`
+      <html>
+        <body style="font-family: Arial, sans-serif; padding: 24px;">
+          <h2>Спасибо за оплату</h2>
+          <p>Если платеж прошел успешно, доступ к режиму «Оживить семью» будет активирован автоматически. Вернитесь в бот.</p>
+        </body>
+      </html>
+    `);
+});
+
 async function handleYooKassaWebhook(req, res) {
   // YooKassa нужно быстро получить HTTP 200.
   res.status(200).json({ ok: true });
@@ -6634,6 +6998,42 @@ async function handleYooKassaWebhook(req, res) {
   return;
 }
 
+      if (product === FAMILY_VIDEO_PRODUCT_CODE) {
+  const result = await applyFamilyVideoPayment(payment);
+
+  console.log("Family video payment apply result:", result);
+
+  if (result.granted && result.userId) {
+    setUserImageMode(result.userId, IMAGE_MODE_FAMILY_VIDEO);
+    clearFamilyVideoDraft(result.userId);
+
+    await sendMaxMessage(
+      {
+        type: "user_id",
+        id: result.userId
+      },
+      [
+        "✅ **Оплата прошла. Режим «Оживить семью» открыт.**",
+        "",
+        "Теперь отправьте **2 фото**:",
+        "1. начальный кадр / Person 1;",
+        "2. end image / Person 2.",
+        "",
+        "Можно отправить оба фото одним сообщением.",
+        "Если отправите одно фото — я сохраню его как первый кадр и попрошу второе.",
+        "",
+        "Любой текст будет проигнорирован.",
+        "",
+        "Видео будет создано на **6 секунд** через Seedance Lite, качество **720p**."
+      ].join("\n")
+    ).catch((error) => {
+      console.warn("Failed to send family video success message:", error?.message || error);
+    });
+  }
+
+  return;
+}
+
       if (product === VIDEO_PRODUCT_CODE) {
   const result = await applyVideoPayment(payment);
         const videoPaymentMode = String(metadata.mode || "").trim();
@@ -6663,7 +7063,7 @@ if (result.granted && result.userId) {
         "",
         "Любой текст будет проигнорирован.",
         "",
-        "Видео будет создано на **6 секунд** через Seedance Lite, качество **480p**."
+        "Видео будет создано на **6 секунд** через Seedance Lite, качество **720p**."
       ].join("\n")
     ).catch((error) => {
       console.warn("Failed to send family video success message:", error?.message || error);
