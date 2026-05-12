@@ -3499,7 +3499,7 @@ function buildCreatePhotoKeyboard() {
     [
       {
         type: "callback",
-        text: "🎨 СТИЛИ",
+        text: "🌌 СТИЛИ",
         payload: MENU_PHOTO_STYLES_PAYLOAD
       }
     ],
@@ -3581,7 +3581,7 @@ const text =
   "Отправь:\n" +
   "• фото + промт — если хочешь изменить фото;\n" +
   "• просто промт — если хочешь создать картинку с нуля;\n" +
-  "• или нажми **🎨 СТИЛИ**, выбери стиль и просто отправь фото.";
+  "• или нажми **🌌 СТИЛИ**, выбери стиль и просто отправь фото.";
 
   const attachments = [
     {
@@ -4029,7 +4029,7 @@ async function answerSponsorsList(callbackId, target) {
   const text = [
     "❤️ **Спонсоры**",
     "",
-    "Спасибо этим людям, которые внесли огромный вклад в развитие нашего бота.",
+    "**🐣Спасибо этим людям, которые внесли огромный вклад в развитие нашего бота.**",
     "",
     sponsorsText
   ].join("\n");
@@ -4069,10 +4069,10 @@ async function sendPremiumInfo(target, userId) {
     "💸 **Отключить лимиты**\n\n" +
     "*Что дает Премиум?*\n\n" +
     "**1️⃣ Вы получите 10 фото в день с лучшей моделью.**\n" +
-    "**2️⃣ Вместо ChatGPT 8 запросов — 16 запросов в день.**\n" +
+    "**2️⃣ ChatGPT 16 запросов в день.**\n" +
     "**3️⃣ Уйдет обязательная подписка на каналы.**\n" +
     "**4️⃣ 1 оживление фото в день бесплатно.**\n\n" +
-    "Вы становитесь **Спонсором Бота** и членом нашей семьи.\n\n" +
+    "Вы становитесь **Спонсором Бота** и членом нашей семьи.🌟\n\n" +
     "💳 Стоимость: *199 ₽ за 30 дней*.";
 
   if (premiumUntil) {
@@ -4098,7 +4098,7 @@ if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
 buttons.push([
   {
     type: "callback",
-    text: "💎 Спонсоры",
+    text: "🌠 Спонсоры",
     payload: MENU_SPONSORS_PAYLOAD
   }
 ]);
@@ -6712,7 +6712,7 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
       lockUserProcessing(userId);
       processingLocked = true;
 
-      status = await startDynamicStatus(target, "🛠️Фото реставрируется");
+      status = await startDynamicStatus(target, "Фото реставрируется🚂");
 
       await handleImageRequest(
         update,
@@ -6765,7 +6765,7 @@ if (photoStyleModeActive) {
 
   status = await startDynamicStatus(
     target,
-    "🎨 Фото создаётся в выбранном стиле"
+    "**Фото создаётся в выбранном стиле🛵**"
   );
 
   const stylePrompt = buildPhotoStylePrompt(styleKey, userText);
