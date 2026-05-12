@@ -223,7 +223,7 @@ const PHOTO_STYLES = {
     button: "☀️ ЛЕТНЕЕ",
     title: "ЛЕТО И ШАШЛЫК",
     prompt:
-      "Edit my photo into a realistic summer barbecue scene: preserve my face and identity 1:1 with maximum accuracy, dress me in light summer clothes, place me behind a mangal cooking шашлыки on skewers, warm outdoor summer atmosphere, natural golden light, realistic hands and body, sharp face, high detail, photorealistic, cinematic quality, square 1:1 composition, no face distortion, no extra fingers, no AI artifacts."
+      "Transform this photo into a realistic outdoor summer cookout scene with a warm sunset atmosphere. The person is casually dressed and cooking skewers on a charcoal grill in a cozy backyard setting. Natural lighting, photorealistic style, realistic anatomy, detailed textures, cinematic color grading, high-quality photography, 1:1 aspect ratio."
   },
   lemonade: {
     button: "⚾ ТРЕНД",
@@ -6766,7 +6766,7 @@ if (photoStyleModeActive) {
 
   status = await startDynamicStatus(
     target,
-    "**Фото создаётся в выбранном стиле🛵**"
+    "Фото создаётся в выбранном стиле 🛵"
   );
 
   const stylePrompt = buildPhotoStylePrompt(styleKey, userText);
