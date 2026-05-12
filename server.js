@@ -192,6 +192,9 @@ const SUBSCRIPTION_CHECK_PAYLOAD = "check_subscription";
 
 // Пейлоады для основного меню
 const MENU_CREATE_PHOTO_PAYLOAD = "menu_create_photo";
+const MENU_PHOTO_STYLES_PAYLOAD = "menu_photo_styles";
+const PHOTO_STYLE_PAYLOAD_PREFIX = "photo_style:";
+const IMAGE_MODE_PHOTO_STYLE = "photo_style";
 const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
 const MENU_CREATE_FAMILY_VIDEO_PAYLOAD = "menu_create_family_video";
 const MENU_RESTORE_PHOTO_PAYLOAD = "menu_restore_photo";
@@ -202,6 +205,62 @@ const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
 
 const IMAGE_MODE_RESTORATION = "restoration";
 const IMAGE_MODE_PRODUCT_CARD = "product_card";
+const PHOTO_STYLES = {
+  lego: {
+    button: "🧱 ЛЕГО",
+    title: "ЛЕГО",
+    prompt:
+      "Turn the person/photo into a premium brick-toy style scene, plastic toy brick texture, playful miniature world, colorful blocks, toy photography look, keep the person's identity recognizable, no real brand logos, no text."
+  },
+  cartoon: {
+    button: "🎨 МУЛЬТИК",
+    title: "МУЛЬТИК",
+    prompt:
+      "Transform the person/photo into a bright family-friendly cartoon style, clean outlines, expressive but natural face, soft colors, polished animation look, keep the identity recognizable."
+  },
+  summer: {
+    button: "☀️ ЛЕТНЕЕ",
+    title: "ЛЕТНЕЕ",
+    prompt:
+      "Create a sunny summer version of the photo, warm daylight, beach or park atmosphere, fresh colors, relaxed vacation mood, natural look, keep the person's identity and face recognizable."
+  },
+  lemonade: {
+    button: "🍋 С ЛИМОНАДОМ",
+    title: "С ЛИМОНАДОМ",
+    prompt:
+      "Edit my photo into a realistic sports broadcast crowd shot. Preserve my identity exactly: same face, same facial features, same skin tone, same hairstyle, same age, same proportions. Place me sitting in the audience at a baseball stadium during a live game. Make it look like a candid TV broadcast close-up of a spectator. I am wearing a blue denim jacket over a gray shirt and holding a plastic cup with a coca cola soda drink. Surround me with other fans in stadium seats, with blue chairs visible. Add subtle broadcast-style scoreboard graphics in the frame corners, creating the feeling of a live sports TV moment. Keep the image highly realistic, natural skin texture, soft stadium lighting, telephoto lens look, shallow depth of field, background crowd slightly blurred. The result should look like a real televised sports event frame, not a studio portrait."
+  },
+  queen: {
+    button: "👑 ЦАРИЦА",
+    title: "ЦАРИЦА",
+    prompt:
+      "Transform the person into a royal queen portrait, elegant crown, luxurious royal dress, palace-inspired background, cinematic lighting, noble posture, keep the same face and identity."
+  },
+  space: {
+    button: "🚀 КОСМОСАГА",
+    title: "КОСМОСАГА",
+    prompt:
+      "Edit my photo into a realistic cinematic Star Wars portrait. Preserve my face and identity exactly 1:1 with maximum fidelity: same facial features, same skin tone, same hairstyle, same likeness, no changes to identity. Dress me in detailed Jedi-style Star Wars clothing and place a glowing lightsaber in my hand, any color. Make it ultra-realistic, cinematic, dramatic lighting, premium sci-fi atmosphere, realistic hands, realistic face, sharp detail, epic movie still. Square 1:1 composition, centered framing, clean galactic background. Do not distort the face, hands, or body."
+  },
+  suit: {
+    button: "🤵 В КОСТЮМЕ",
+    title: "В КОСТЮМЕ",
+    prompt:
+      "Dress the person in an elegant premium suit, business or luxury editorial portrait, clean background, expensive lighting, confident pose, keep the same face and identity."
+  },
+  cyberpunk: {
+    button: "🌃 КИБЕРПАНК",
+    title: "КИБЕРПАНК",
+    prompt:
+      "Transform the photo into a cinematic cyberpunk portrait, neon city lights, futuristic jacket, rain reflections, dramatic lighting, keep the person's identity recognizable."
+  },
+  fantasy: {
+    button: "🧝 ФЭНТЕЗИ",
+    title: "ФЭНТЕЗИ",
+    prompt:
+      "Transform the photo into a fantasy hero portrait, magical atmosphere, elegant fantasy outfit, soft glowing light, epic background, keep the person's identity recognizable."
+  }
+};
 
 const RESTORATION_PROMPT = `Реставрируй старую фотографию максимально аккуратно и реалистично.
 
@@ -251,6 +310,59 @@ function shouldRegisterBotUser(userId) {
 }
 
 const userImageModes = new Map();
+const userPhotoStyles = new Map();
+
+function setUserPhotoStyle(userId, styleKey) {
+  const key = String(userId || "unknown");
+
+  if (!PHOTO_STYLES[styleKey]) {
+    userPhotoStyles.delete(key);
+    return;
+  }
+
+  userPhotoStyles.set(key, styleKey);
+  setUserImageMode(userId, IMAGE_MODE_PHOTO_STYLE);
+}
+
+function getUserPhotoStyle(userId) {
+  return userPhotoStyles.get(String(userId || "unknown")) || "";
+}
+
+function clearUserPhotoStyle(userId) {
+  userPhotoStyles.delete(String(userId || "unknown"));
+}
+
+function isPhotoStyleMode(userId) {
+  return getUserImageMode(userId) === IMAGE_MODE_PHOTO_STYLE;
+}
+
+function buildPhotoStylePrompt(styleKey, userText = "") {
+  const style = PHOTO_STYLES[styleKey];
+
+  if (!style) {
+    return "";
+  }
+
+  const extraUserText = String(userText || "").trim();
+
+  return `
+Use the input photo as the main reference.
+
+Apply selected style:
+${style.prompt}
+
+User extra wishes:
+${extraUserText || "No extra wishes."}
+
+Strict requirements:
+- preserve the same person from the input photo;
+- keep face identity recognizable;
+- keep age, facial structure, skin tone, hairstyle and key details close to the original;
+- do not change the person into someone else;
+- do not add random text, logos or watermarks;
+- final result must be a polished square 1:1 image.
+`.trim();
+}
 
 const userFamilyVideoDrafts = new Map();
 const FAMILY_VIDEO_DRAFT_TTL_MS = Number(
@@ -303,7 +415,10 @@ function getUserImageMode(userId) {
 }
 
 function clearUserImageMode(userId) {
-  userImageModes.delete(String(userId || "unknown"));
+  const key = String(userId || "unknown");
+
+  userImageModes.delete(key);
+  userPhotoStyles.delete(key);
 }
 
 function isRestorationMode(userId) {
@@ -3366,6 +3481,50 @@ function buildBackButtonKeyboard() {
   ];
 }
 
+function buildCreatePhotoKeyboard() {
+  return [
+    [
+      {
+        type: "callback",
+        text: "🎨 СТИЛИ",
+        payload: MENU_PHOTO_STYLES_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
+        text: "⬅️ Назад",
+        payload: MENU_BACK_PAYLOAD
+      }
+    ]
+  ];
+}
+
+function buildPhotoStylesKeyboard() {
+  const rows = [];
+  const entries = Object.entries(PHOTO_STYLES);
+
+  for (let i = 0; i < entries.length; i += 2) {
+    const row = entries.slice(i, i + 2).map(([key, style]) => ({
+      type: "callback",
+      text: style.button,
+      payload: `${PHOTO_STYLE_PAYLOAD_PREFIX}${key}`
+    }));
+
+    rows.push(row);
+  }
+
+  rows.push([
+    {
+      type: "callback",
+      text: "⬅️ Назад",
+      payload: MENU_CREATE_PHOTO_PAYLOAD
+    }
+  ]);
+
+  return rows;
+}
+
 async function answerMainMenu(callbackId, target, prefixText = "") {
   const text =
     prefixText ||
@@ -3395,7 +3554,7 @@ async function sendCreatePhotoHelp(target) {
     {
       type: "inline_keyboard",
       payload: {
-        buttons: buildBackButtonKeyboard()
+        buttons: buildCreatePhotoKeyboard()
       }
     }
   ];
@@ -3404,12 +3563,48 @@ async function sendCreatePhotoHelp(target) {
 }
 
 async function answerCreatePhotoHelp(callbackId, target) {
+const text =
+  "📸 **Создать фото Бесплатно**\n\n" +
+  "Отправь:\n" +
+  "• фото + промт — если хочешь изменить фото;\n" +
+  "• просто промт — если хочешь создать картинку с нуля;\n" +
+  "• или нажми **🎨 СТИЛИ**, выбери стиль и просто отправь фото.";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildCreatePhotoKeyboard()
+      }
+    }
+  ];
+
+  return answerMaxCallbackWithMessage(callbackId, target, text, attachments);
+}
+
+async function answerPhotoStylesMenu(callbackId, target) {
   const text =
-    "📸 **Создать фото Бесплатно**\n\n" +
-    "Отправь:\n" +
-    "• фото + промт (что изменить/добавить)\n" +
-    "или\n" +
-    "• просто промт с текстом вида: `создай фото/картинку ...`";
+    "🎨 **Выберите стиль для фото**\n\n" +
+    "После выбора стиля просто отправьте фото. Текст писать не обязательно.\n\n" +
+    "Если хотите добавить пожелание — отправьте фото вместе с коротким текстом.";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildPhotoStylesKeyboard()
+      }
+    }
+  ];
+
+  return answerMaxCallbackWithMessage(callbackId, target, text, attachments);
+}
+
+async function answerPhotoStyleActivated(callbackId, target, style) {
+  const text =
+    `🎨 **Стиль активирован: ${style.title}**\n\n` +
+    "Теперь просто отправьте фото.\n\n" +
+    "Если добавите текст к фото, он будет учтён как дополнительное пожелание.";
 
   const attachments = [
     {
@@ -4614,6 +4809,8 @@ function buildImageJsonBody(prompt, options = {}) {
 
   return body;
 }
+
+
 
 async function generateOpenAIImage(prompt, options = {}) {
   const response = await fetch(`${OPENAI_API_BASE}/images/generations`, {
@@ -6222,6 +6419,33 @@ if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
 
   return;
 }
+
+ // Меню стилей фото
+if (callbackPayload === MENU_PHOTO_STYLES_PAYLOAD) {
+  clearUserImageMode(userId);
+
+  await answerPhotoStylesMenu(callbackId, target);
+  return;
+}
+
+// Выбор конкретного стиля фото
+if (String(callbackPayload || "").startsWith(PHOTO_STYLE_PAYLOAD_PREFIX)) {
+  const styleKey = String(callbackPayload).slice(PHOTO_STYLE_PAYLOAD_PREFIX.length);
+  const style = PHOTO_STYLES[styleKey];
+
+  if (!style) {
+    if (callbackId) {
+      await answerMaxCallback(callbackId, "Неизвестный стиль.");
+    }
+
+    return;
+  }
+
+  setUserPhotoStyle(userId, styleKey);
+
+  await answerPhotoStyleActivated(callbackId, target, style);
+  return;
+} 
   
 // 3) Меню: Реставрация
 if (callbackPayload === MENU_RESTORE_PHOTO_PAYLOAD) {
@@ -6390,6 +6614,59 @@ if (productCardModeActive) {
     );
     return;
   }
+
+  const photoStyleModeActive = isPhotoStyleMode(userId);
+
+if (photoStyleModeActive) {
+  const styleKey = getUserPhotoStyle(userId);
+  const style = PHOTO_STYLES[styleKey];
+
+  if (!style) {
+    clearUserImageMode(userId);
+
+    await sendMaxMessage(
+      target,
+      "Стиль не найден. Нажмите «Создать фото» → «СТИЛИ» и выберите стиль заново."
+    );
+
+    return;
+  }
+
+  if (!incomingImageUrl) {
+    await sendMaxMessage(
+      target,
+      `🎨 Стиль **${style.title}** активирован. Теперь отправьте фото.`
+    );
+
+    return;
+  }
+
+  if (isUserBusy(userId)) {
+    await sendBusyWarningIfNeeded(target, userId, firstName);
+    return;
+  }
+
+  lockUserProcessing(userId);
+  processingLocked = true;
+
+  status = await startDynamicStatus(target, "🎨 Фото создаётся в выбранном стиле");
+
+  const stylePrompt = buildPhotoStylePrompt(styleKey, userText);
+
+  await handleImageRequest(
+    update,
+    target,
+    stylePrompt,
+    incomingImageUrl,
+    userId,
+    `✅ Готово. Стиль: ${style.title}`
+  );
+
+  await status.stop();
+  status = null;
+
+  return;
+}
 
   if (!userText && incomingImageUrl) {
     await sendMaxMessage(
