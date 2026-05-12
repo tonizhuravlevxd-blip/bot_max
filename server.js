@@ -6604,18 +6604,7 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
       return;
     }
 
-const productCardModeActive = isProductCardMode(userId);
-
-if (productCardModeActive) {
-  if (!userText && !incomingImageUrl) {
-    await sendMaxMessage(
-      target,
-      "🛒 Режим карточки товара включён. Отправьте **фото + промт** или просто **описание товара**."
-    );
-    return;
-  }
-
-  const photoStyleModeActive = isPhotoStyleMode(userId);
+    const photoStyleModeActive = isPhotoStyleMode(userId);
 
 if (photoStyleModeActive) {
   const styleKey = getUserPhotoStyle(userId);
@@ -6649,7 +6638,10 @@ if (photoStyleModeActive) {
   lockUserProcessing(userId);
   processingLocked = true;
 
-  status = await startDynamicStatus(target, "🎨 Фото создаётся в выбранном стиле");
+  status = await startDynamicStatus(
+    target,
+    "🎨 Фото создаётся в выбранном стиле"
+  );
 
   const stylePrompt = buildPhotoStylePrompt(styleKey, userText);
 
@@ -6667,6 +6659,19 @@ if (photoStyleModeActive) {
 
   return;
 }
+
+const productCardModeActive = isProductCardMode(userId);
+
+if (productCardModeActive) {
+  if (!userText && !incomingImageUrl) {
+    await sendMaxMessage(
+      target,
+      "🛒 Режим карточки товара включён. Отправьте **фото + промт** или просто **описание товара**."
+    );
+    return;
+  }
+
+
 
   if (!userText && incomingImageUrl) {
     await sendMaxMessage(
