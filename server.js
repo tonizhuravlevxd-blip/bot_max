@@ -221,13 +221,13 @@ const PHOTO_STYLES = {
   },
   summer: {
     button: "☀️ ЛЕТНЕЕ",
-    title: "ЛЕТНЕЕ",
+    title: "ЛЕТО И ШАШЛЫК",
     prompt:
       "Edit my photo into a realistic summer barbecue scene: preserve my face and identity 1:1 with maximum accuracy, dress me in light summer clothes, place me behind a mangal cooking шашлыки on skewers, warm outdoor summer atmosphere, natural golden light, realistic hands and body, sharp face, high detail, photorealistic, cinematic quality, square 1:1 composition, no face distortion, no extra fingers, no AI artifacts."
   },
   lemonade: {
-    button: "⚾ ЗРИТЕЛЬ ТРЕНД",
-    title: "⚾ЗРИТЕЛЬ",
+    button: "⚾ ТРЕНД",
+    title: "⚾ЗРИТЕЛЬ НА СТАДИОНЕ",
     prompt:
       "Edit my photo into a realistic sports broadcast crowd shot. Preserve my identity exactly: same face, same facial features, same skin tone, same hairstyle, same age, same proportions. Place me sitting in the audience at a baseball stadium during a live game. Make it look like a candid TV broadcast close-up of a spectator. I am wearing a blue denim jacket over a gray shirt and holding a plastic cup with a coca cola soda drink. Surround me with other fans in stadium seats, with blue chairs visible. Add subtle broadcast-style scoreboard graphics in the frame corners, creating the feeling of a live sports TV moment. Keep the image highly realistic, natural skin texture, soft stadium lighting, telephoto lens look, shallow depth of field, background crowd slightly blurred. The result should look like a real televised sports event frame, not a studio portrait."
   },
