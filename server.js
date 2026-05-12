@@ -3964,13 +3964,7 @@ function buildMusicBuyUrl(userId) {
   return url.toString();
 }
 
-function sanitizeSponsorPublicName(value) {
-  return String(value || "")
-    .replace(/[\r\n*_`[\]()~>#+\-=|{}.!]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 40);
-}
+
 
 function sanitizeSponsorPublicName(value) {
   return String(value || "")
@@ -4033,7 +4027,7 @@ async function answerSponsorsList(callbackId, target) {
   }
 
   const text = [
-    "💎 **Спонсоры**",
+    "❤️ **Спонсоры**",
     "",
     "Спасибо этим людям, которые внесли огромный вклад в развитие нашего бота.",
     "",
