@@ -199,6 +199,7 @@ const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
 const MENU_CREATE_FAMILY_VIDEO_PAYLOAD = "menu_create_family_video";
 const MENU_RESTORE_PHOTO_PAYLOAD = "menu_restore_photo";
 const MENU_PREMIUM_PAYLOAD = "menu_premium";
+const MENU_SPONSORS_PAYLOAD = "menu_sponsors";
 const MENU_BACK_PAYLOAD = "menu_back";
 const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
 
@@ -563,6 +564,11 @@ async function initBroadcastUsersDb() {
   `);
 
   await dbPool.query(`
+  ALTER TABLE max_bot_broadcast_users
+  ADD COLUMN IF NOT EXISTS first_name TEXT
+`);
+
+  await dbPool.query(`
     CREATE INDEX IF NOT EXISTS idx_max_bot_broadcast_users_user_id
     ON max_bot_broadcast_users (user_id)
   `);
@@ -575,20 +581,27 @@ async function initBroadcastUsersDb() {
   console.log("Broadcast users DB initialized");
 }
 
-async function registerBotUserInDb(userId) {
+async function registerBotUserInDb(userId, firstName = "") {
   if (!dbPool) return false;
   if (!isValidUserIdForBroadcast(userId)) return false;
 
   const key = String(userId);
+  const cleanFirstName = String(firstName || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 80);
 
   await dbPool.query(
     `
-      INSERT INTO max_bot_broadcast_users (user_id, bot_key)
-      VALUES ($1, $2)
+      INSERT INTO max_bot_broadcast_users (user_id, bot_key, first_name)
+      VALUES ($1, $2, $3)
       ON CONFLICT (user_id, bot_key)
-      DO UPDATE SET last_seen_at = NOW()
+      DO UPDATE SET
+        last_seen_at = NOW(),
+        first_name = COALESCE(NULLIF(EXCLUDED.first_name, ''), max_bot_broadcast_users.first_name)
     `,
-    [key, BOT_KEY]
+    [key, BOT_KEY, cleanFirstName]
   );
 
   return true;
@@ -3951,6 +3964,112 @@ function buildMusicBuyUrl(userId) {
   return url.toString();
 }
 
+function sanitizeSponsorPublicName(value) {
+  return String(value || "")
+    .replace(/[\r\n*_`[\]()~>#+\-=|{}.!]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
+}
+
+function maskSponsorUserId(userId) {
+  const value = String(userId || "").trim();
+
+  if (!value || value.length < 4) {
+    return "Спонсор";
+  }
+
+  return `Спонсор ****${value.slice(-4)}`;
+}
+
+function formatSponsorDisplay(row) {
+  const name = sanitizeSponsorPublicName(row?.first_name);
+  const maskedId = maskSponsorUserId(row?.user_id);
+
+  return name ? `${name} · ${maskedId}` : maskedId;
+}
+
+async function getLastPremiumSponsors(limit = 5) {
+  if (!dbPool) return null;
+
+  const safeLimit = Math.min(10, Math.max(1, Number(limit) || 5));
+
+  const result = await dbPool.query(
+    `
+      SELECT user_id, first_name, paid_at
+      FROM (
+        SELECT DISTINCT ON (p.user_id)
+          p.user_id,
+          COALESCE(NULLIF(b.first_name, ''), '') AS first_name,
+          p.updated_at AS paid_at
+        FROM max_bot_premium_payments p
+        LEFT JOIN max_bot_broadcast_users b
+          ON b.user_id = p.user_id
+         AND b.bot_key = p.bot_key
+        WHERE p.bot_key = $1
+          AND p.status = 'succeeded'
+          AND COALESCE(p.raw->'metadata'->>'product', '') = 'premium_month'
+        ORDER BY p.user_id, p.updated_at DESC
+      ) latest
+      ORDER BY paid_at DESC
+      LIMIT $2
+    `,
+    [BOT_KEY, safeLimit]
+  );
+
+  return result.rows;
+}
+
+async function answerSponsorsList(callbackId, target) {
+  const sponsors = await getLastPremiumSponsors(5);
+
+  let sponsorsText = "";
+
+  if (sponsors === null) {
+    sponsorsText = "⚠️ DATABASE_URL не задан, поэтому список спонсоров недоступен.";
+  } else if (!sponsors.length) {
+    sponsorsText = "Пока список пуст. Первый спонсор появится здесь после оплаты Premium.";
+  } else {
+    sponsorsText = sponsors
+      .map((sponsor, index) => `${index + 1}. ${formatSponsorDisplay(sponsor)}`)
+      .join("\n");
+  }
+
+  const text = [
+    "💎 **Спонсоры**",
+    "",
+    "Спасибо этим людям, которые внесли огромный вклад в развитие нашего бота.",
+    "",
+    sponsorsText
+  ].join("\n");
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: [
+          [
+            {
+              type: "callback",
+              text: "💵 Купить Премиум",
+              payload: MENU_PREMIUM_PAYLOAD
+            }
+          ],
+          [
+            {
+              type: "callback",
+              text: "⬅️ Назад к меню",
+              payload: MENU_BACK_PAYLOAD
+            }
+          ]
+        ]
+      }
+    }
+  ];
+
+  return answerMaxCallbackWithMessage(callbackId, target, text, attachments);
+}
+
 async function sendPremiumInfo(target, userId) {
   const premiumUntil = await getUserPremiumUntil(userId);
   const buyUrl = buildPremiumBuyUrl(userId);
@@ -3975,23 +4094,31 @@ async function sendPremiumInfo(target, userId) {
 
   const buttons = [];
 
-  if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
-    buttons.push([
-      {
-        type: "link",
-        text: "💳 Купить Премиум — 199 ₽",
-        url: buyUrl
-      }
-    ]);
-  }
-
+if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
   buttons.push([
     {
-      type: "callback",
-      text: "⬅️ Назад к меню",
-      payload: MENU_BACK_PAYLOAD
+      type: "link",
+      text: "💳 Купить Премиум — 199 ₽",
+      url: buyUrl
     }
   ]);
+}
+
+buttons.push([
+  {
+    type: "callback",
+    text: "💎 Спонсоры",
+    payload: MENU_SPONSORS_PAYLOAD
+  }
+]);
+
+buttons.push([
+  {
+    type: "callback",
+    text: "⬅️ Назад к меню",
+    payload: MENU_BACK_PAYLOAD
+  }
+]);
 
   return sendMaxMessageWithAttachments(target, text, [
     {
@@ -6326,7 +6453,7 @@ async function handleUpdate(update) {
 const broadcastUserId = getRealUserIdForBroadcast(update, target);
 
 if (shouldRegisterBotUser(broadcastUserId)) {
-  registerBotUserInDb(broadcastUserId).catch((error) => {
+  registerBotUserInDb(broadcastUserId, firstName).catch((error) => {
     console.warn("Failed to register bot user in DB:", error?.message || error);
   });
 }
@@ -6495,6 +6622,13 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         await sendPremiumInfo(target, userId);
         return;
       }
+
+  if (callbackPayload === MENU_SPONSORS_PAYLOAD) {
+  clearUserImageMode(userId);
+
+  await answerSponsorsList(callbackId, target);
+  return;
+}
 
 // 6) Кнопка "Назад" — возвращаем к меню
 if (callbackPayload === MENU_BACK_PAYLOAD) {
