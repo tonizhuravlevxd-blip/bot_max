@@ -3972,21 +3972,12 @@ function sanitizeSponsorPublicName(value) {
     .slice(0, 40);
 }
 
-function maskSponsorUserId(userId) {
-  const value = String(userId || "").trim();
-
-  if (!value || value.length < 4) {
-    return "Спонсор";
-  }
-
-  return `Спонсор ****${value.slice(-4)}`;
-}
-
-function formatSponsorDisplay(row) {
-  const name = sanitizeSponsorPublicName(row?.first_name);
-  const maskedId = maskSponsorUserId(row?.user_id);
-
-  return name ? `${name} · ${maskedId}` : maskedId;
+function sanitizeSponsorPublicName(value) {
+  return String(value || "")
+    .replace(/[\r\n*_`[\]()~>#+\-=|{}.!]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 40);
 }
 
 async function getLastPremiumSponsors(limit = 5) {
@@ -3996,19 +3987,23 @@ async function getLastPremiumSponsors(limit = 5) {
 
   const result = await dbPool.query(
     `
-      SELECT user_id, first_name, paid_at
+      SELECT first_name, paid_at
       FROM (
         SELECT DISTINCT ON (p.user_id)
-          p.user_id,
-          COALESCE(NULLIF(b.first_name, ''), '') AS first_name,
+          sanitize.first_name AS first_name,
           p.updated_at AS paid_at
         FROM max_bot_premium_payments p
-        LEFT JOIN max_bot_broadcast_users b
-          ON b.user_id = p.user_id
-         AND b.bot_key = p.bot_key
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(NULLIF(b.first_name, ''), '') AS first_name
+          FROM max_bot_broadcast_users b
+          WHERE b.user_id = p.user_id
+            AND b.bot_key = p.bot_key
+          LIMIT 1
+        ) sanitize ON true
         WHERE p.bot_key = $1
           AND p.status = 'succeeded'
           AND COALESCE(p.raw->'metadata'->>'product', '') = 'premium_month'
+          AND COALESCE(sanitize.first_name, '') <> ''
         ORDER BY p.user_id, p.updated_at DESC
       ) latest
       ORDER BY paid_at DESC
@@ -4017,7 +4012,9 @@ async function getLastPremiumSponsors(limit = 5) {
     [BOT_KEY, safeLimit]
   );
 
-  return result.rows;
+  return result.rows.map((row) => ({
+    first_name: sanitizeSponsorPublicName(row.first_name)
+  })).filter((row) => row.first_name);
 }
 
 async function answerSponsorsList(callbackId, target) {
@@ -4031,7 +4028,7 @@ async function answerSponsorsList(callbackId, target) {
     sponsorsText = "Пока список пуст. Первый спонсор появится здесь после оплаты Premium.";
   } else {
     sponsorsText = sponsors
-      .map((sponsor, index) => `${index + 1}. ${formatSponsorDisplay(sponsor)}`)
+      .map((sponsor, index) => `${index + 1}. ${sponsor.first_name}`)
       .join("\n");
   }
 
