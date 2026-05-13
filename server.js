@@ -7197,10 +7197,7 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
   clearUserImageMode(userId);
   clearFamilyVideoDraft(userId);
 
-  answerMainMenu(callbackId, target).catch((error) => {
-    console.error("answerMainMenu failed:", error?.message || error);
-  });
-
+  await sendMainMenu(target);
   return;
 }
 
