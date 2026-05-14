@@ -70,6 +70,14 @@ const FAL_SEEDANCE_TEXT_TO_VIDEO_URL =
   process.env.FAL_SEEDANCE_TEXT_TO_VIDEO_URL ||
   "https://queue.fal.run/fal-ai/bytedance/seedance/v1/lite/text-to-video";
 
+const CREATE_VIDEO_MODEL =
+  process.env.CREATE_VIDEO_MODEL ||
+  "https://queue.fal.run/fal-ai/kling-video/v2.5-turbo/standard/image-to-video";
+
+const CREATE_VIDEO_URL =
+  process.env.CREATE_VIDEO_URL ||
+  `https://queue.fal.run/${CREATE_VIDEO_MODEL}`;
+
 const FAL_QUEUE_TIMEOUT_MS = Number(process.env.FAL_QUEUE_TIMEOUT_MS || 8 * 60_000);
 const FAL_QUEUE_POLL_INTERVAL_MS = Number(process.env.FAL_QUEUE_POLL_INTERVAL_MS || 2500);
 
@@ -5900,7 +5908,7 @@ async function makePromptVideoFromFalSeedance({ prompt, inputImage = null }) {
 
   if (hasInputImage) {
     const imageUrl = await uploadImageToFalCdn(inputImage);
-    endpoint = FAL_SEEDANCE_IMAGE_TO_VIDEO_URL;
+    endpoint = CREATE_VIDEO_MODEL;
     body = {
       ...body,
       image_url: imageUrl
