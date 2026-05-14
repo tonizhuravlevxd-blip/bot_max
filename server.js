@@ -104,11 +104,21 @@ const FAMILY_VIDEO_EXAMPLE_URL =
 const FAMILY_VIDEO_EXAMPLE_MAX_TOKEN =
   process.env.FAMILY_VIDEO_EXAMPLE_MAX_TOKEN || "";
 
+const PROMPT_VIDEO_EXAMPLE_URL =
+  process.env.PROMPT_VIDEO_EXAMPLE_URL ||
+  "https://v3b.fal.media/files/b/0a99ceed/sKwSVXJ_V6BPPPlDOLfNH_output.mp4";
+
+const PROMPT_VIDEO_EXAMPLE_MAX_TOKEN =
+  process.env.PROMPT_VIDEO_EXAMPLE_MAX_TOKEN || "";
+
 let cachedVideoExampleToken = VIDEO_EXAMPLE_MAX_TOKEN;
 let videoExampleTokenPromise = null;
 
 let cachedFamilyVideoExampleToken = FAMILY_VIDEO_EXAMPLE_MAX_TOKEN;
 let familyVideoExampleTokenPromise = null;
+
+let cachedPromptVideoExampleToken = PROMPT_VIDEO_EXAMPLE_MAX_TOKEN;
+let promptVideoExampleTokenPromise = null;
 
 const IMAGE_MODE_VIDEO = "video_animation";
 const IMAGE_MODE_PROMPT_VIDEO = "prompt_video";
@@ -3620,6 +3630,41 @@ async function getFamilyVideoExampleMaxToken({ force = false } = {}) {
   }
 }
 
+async function getPromptVideoExampleMaxToken({ force = false } = {}) {
+  if (!PROMPT_VIDEO_EXAMPLE_URL && !cachedPromptVideoExampleToken) {
+    return "";
+  }
+
+  if (!force && cachedPromptVideoExampleToken) {
+    return cachedPromptVideoExampleToken;
+  }
+
+  if (!force && promptVideoExampleTokenPromise) {
+    return promptVideoExampleTokenPromise;
+  }
+
+  promptVideoExampleTokenPromise = (async () => {
+    const videoBuffer = await downloadBufferFromUrl(
+      PROMPT_VIDEO_EXAMPLE_URL,
+      "video/"
+    );
+
+    const token = await uploadVideoToMaxAndGetToken(videoBuffer);
+
+    cachedPromptVideoExampleToken = token;
+
+    console.log(`PROMPT_VIDEO_EXAMPLE_MAX_TOKEN=${token}`);
+
+    return token;
+  })();
+
+  try {
+    return await promptVideoExampleTokenPromise;
+  } finally {
+    promptVideoExampleTokenPromise = null;
+  }
+}
+
 async function sendMaxVideoToken(target, text, token) {
   const attachments = [
     {
@@ -4104,15 +4149,28 @@ async function sendCreatePromptVideoHelp(target, userId) {
     }
   ]);
 
-  return sendMaxMessageWithAttachments(target, text, [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons
-      }
-    }
+const keyboardAttachment = {
+  type: "inline_keyboard",
+  payload: {
+    buttons
+  }
+};
+
+const token = await getPromptVideoExampleMaxToken().catch((error) => {
+  console.warn("Prompt video example token failed:", error?.message || error);
+  return "";
+});
+
+if (token) {
+  return sendMaxVideoTokenWithAttachments(target, text, token, [
+    keyboardAttachment
   ]);
 }
+
+return sendMaxMessageWithAttachments(target, text, [
+  keyboardAttachment
+]);
+  }
 
 async function sendCreateVideoHelp(target, userId) {
   const videoAccess = await getVideoAccessForUser(userId);
