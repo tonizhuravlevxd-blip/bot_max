@@ -3792,14 +3792,14 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🎞️ Создать видео",
+        text: "📹 Создать видео",
         payload: MENU_CREATE_PROMPT_VIDEO_PAYLOAD
       }
     ],
     [
       {
         type: "callback",
-        text: "🎬 Оживить фото",
+        text: "🎞️ Оживить фото",
         payload: MENU_CREATE_VIDEO_PAYLOAD
       }
     ],
@@ -4092,7 +4092,7 @@ async function sendCreatePromptVideoHelp(target, userId) {
     return sendMaxMessageWithAttachments(
       target,
       [
-        "🎞️ **Режим создания видео включён.**",
+        "📹 **Режим создания видео включён.**",
         "",
         `У вас доступно оплаченных видео: **${videoAccess.credits}**.`,
         "",
@@ -4100,7 +4100,7 @@ async function sendCreatePromptVideoHelp(target, userId) {
         "• **просто промт** — бот создаст видео с нуля;",
         "• **фото + промт** — бот оживит/продолжит фото по вашему описанию.",
         "",
-        "Видео будет создано на **5 секунд**, качество **720p**, модель **Seedance**.",
+        "Видео будет создано на **5 секунд**, качество **720p**, модель **KLING**.",
         "",
         "Пример:",
         "`девушка в красном платье идёт по ночному городу, неоновый свет, плавная камера, реалистично`"
@@ -4117,12 +4117,12 @@ async function sendCreatePromptVideoHelp(target, userId) {
   }
 
   let text =
-    "🎞️ **Создать видео AI**\n\n" +
+    "📹 **Создать видео AI**\n\n" +
     `Стоимость: **${Number(PROMPT_VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно видео.\n\n` +
     "Что можно отправить:\n" +
     "• **просто промт** — создание видео с нуля;\n" +
     "• **фото + промт** — фото используется как исходный кадр/референс.\n\n" +
-    "Параметры: **5 секунд**, качество **720p**, модель **Seedance**.\n\n" +
+    "Параметры: **5 секунд**, качество **720p**, модель **KLING**.\n\n" +
     "После оплаты вы получите **1 видео-кредит**.";
 
   if (!buyUrl || !YOOKASSA_SHOP_ID || !YOOKASSA_SECRET_KEY || !FAL_KEY) {
@@ -6779,7 +6779,7 @@ async function handlePromptVideoRequest(update, target, userText, incomingImageU
     [
       "🎞️ **Готово. Видео создано.**",
       "",
-      "Видео создано на **5 секунд**, качество **720p**, модель **Seedance Lite**.",
+      "Видео создано на **5 секунд**, качество **720p**, модель **KLING**.",
       "",
       inputImage
         ? "Использованы фото и промт пользователя."
@@ -7677,7 +7677,7 @@ if (isPromptVideoRequest(userText)) {
 
   setUserImageMode(userId, IMAGE_MODE_PROMPT_VIDEO);
 
-  status = await startDynamicStatus(target, "🎞️ Видео создаётся");
+  status = await startDynamicStatus(target, "📽️ Видео создаётся");
 
   await handlePromptVideoRequest(update, target, userText, incomingImageUrl, userId);
 
@@ -7724,8 +7724,8 @@ if (isVideoRequest(userText, Boolean(incomingImageUrl))) {
       await sendMaxMessage(
         target,
         userLimits.premium
-          ? "Кажется вам надо немного отдохнуть от ИИ🏝️ **Premium-лимит на сегодня: 16 запросов**."
-          : "Кажется вам надо немного отдохнуть от ИИ🏝️, **приходите чуть позже и продолжайте**🦦"
+          ? "Кажется вам надо немного отдохнуть от ИИ🏝️ **Premium-лимит на сегодня: 16 запросов CHATgpt**."
+          : "Кажется вам надо немного отдохнуть от ИИ🏝️(chatgpt), **приходите чуть позже и продолжайте**🦦"
       );
       return;
     }
@@ -8173,7 +8173,7 @@ if (product === PROMPT_VIDEO_PRODUCT_CODE) {
         "• **просто промт** — видео с нуля;",
         "• **фото + промт** — видео на основе фото.",
         "",
-        "Видео будет создано на **5 секунд**, качество **720p**, модель **Seedance Lite**.",
+        "Видео будет создано на **5 секунд**, качество **720p**, модель **KLING**.",
         "",
         "Пример:",
         "`кот в очках едет на скейте по солнечной улице, плавная камера, реалистично`"
