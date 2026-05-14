@@ -5900,7 +5900,7 @@ async function makePromptVideoFromFalSeedance({ prompt, inputImage = null }) {
     prompt: finalPrompt,
     duration: "5",
     resolution: "480p",
-    aspect_ratio: hasInputImage ? "auto" : "9:16",
+    aspect_ratio: "9:16",
     enable_safety_checker: true
   };
 
