@@ -151,24 +151,7 @@ The final result must look like real footage of the same person from the origina
 
 const FAMILY_VIDEO_PROMPT = `Создай реалистичное видео по загруженному фото. Я сижу на стадионе среди зрителей, в той же позе и в той же обстановке, как на фото. Камера неподвижна, стоит на месте, без поворотов, без приближений, без тряски и без движения. Никакого slow motion — движение только в обычной естественной скорости. Сохрани моё лицо максимально точно, 1 в 1 как на оригинальном фото. Не изменяй надписи, табло, логотипы и весь текст, который уже есть в кадре. Сохрани атмосферу стадиона, синие сиденья, зрителей вокруг и общий ракурс как на фото. Я спокойно сижу с обьектом как на фото, а в кадре ощущение, будто меня снимает стадионная камера во время матча. Видео должно быть реалистичным, естественным и максимально похожим на оригинальный кадр.я немного трогаю свои волосы`;
 
-const TREND_MONTH_VIDEO_PROMPT = `Create a short realistic vertical trend video from this ready-made input photo.
-
-Use the input photo as the only visual reference and starting frame.
-Preserve the person and the whole image identity as much as possible:
-same face, same facial features, same age, same skin tone, same hairstyle, same outfit, same stadium/crowd style, same composition and same main visual idea.
-
-Motion:
-make the photo feel alive like a viral social media trend video.
-Add subtle cinematic camera movement, slight parallax, natural blinking if a person is visible, gentle breathing, small realistic head movement, and dynamic stadium/broadcast atmosphere.
-Keep motion smooth, realistic and not exaggerated.
-
-Style:
-realistic viral trend video, sports broadcast atmosphere, premium social media look, clean 9:16 vertical composition, sharp details, natural skin texture.
-
-Avoid:
-face changes, identity change, distorted hands, distorted body, strong morphing, random new people in the foreground, random text, logos, watermarks, subtitles, artifacts, flickering, over-stylization.
-
-Final result must look like a realistic KLING image-to-video trend based on the exact uploaded photo.`;
+const TREND_MONTH_VIDEO_PROMPT = `Создай реалистичное видео по загруженному фото. Я сижу на стадионе среди зрителей, в той же позе и в той же обстановке, как на фото. Камера неподвижна, стоит на месте, без поворотов, без приближений, без тряски и без движения. Никакого slow motion — движение только в обычной естественной скорости. Сохрани моё лицо максимально точно, 1 в 1 как на оригинальном фото. Не изменяй надписи, табло, логотипы и весь текст, который уже есть в кадре. Сохрани атмосферу стадиона, синие сиденья, зрителей вокруг и общий ракурс как на фото. Я спокойно сижу с обьектом как на фото, а в кадре ощущение, будто меня снимает стадионная камера во время матча. Видео должно быть реалистичным, естественным и максимально похожим на оригинальный кадр.`;
 
 const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID || "";
 const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY || "";
