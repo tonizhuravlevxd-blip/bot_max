@@ -93,7 +93,7 @@ const FAMILY_VIDEO_PRICE_RUB =
 const FAMILY_VIDEO_PRODUCT_CODE = "family_photo_animation_video";
 const VIDEO_EXAMPLE_URL =
   process.env.VIDEO_EXAMPLE_URL ||
-  "https://v3b.fal.media/files/b/0a994a93/nP39rGAe_VTIOtxt4ZoPB_video.mp4";
+  "https://v3b.fal.media/files/b/0a99ceed/sKwSVXJ_V6BPPPlDOLfNH_output.mp4";
 
 const VIDEO_EXAMPLE_MAX_TOKEN = process.env.VIDEO_EXAMPLE_MAX_TOKEN || "";
 
@@ -149,31 +149,7 @@ any facial changes, makeup, skin smoothing, exaggerated motion, strong expressio
 
 The final result must look like real footage of the same person from the original image, maintaining direct eye contact with the viewer, a soft natural smile, and subtle realistic waving.`;
 
-const FAMILY_VIDEO_PROMPT = `Use Image 1 as the start image and Person 1. Use Image 2 as the end image and Person 2.
-
-Create a realistic vertical video with a total duration of 6 seconds.
-
-Image 1 is the opening subject. Image 2 is the final subject. The video must clearly begin with Person 1 from Image 1 and end with Person 2 from Image 2.
-
-Both people must appear as if they are in the same room, sharing one continuous environment. Use the background, room, and lighting from Image 1 as the main environment for the entire video. Person 2 must also appear in that same room, with the same background and lighting, so it feels like both people are standing in one shared space.
-
-For the first 2 seconds, keep the camera fully focused only on Person 1 in a close-up shot, facing the camera naturally. During these 2 seconds, Person 1 should not look like a static photo — she should appear alive, with subtle natural motion such as blinking, slight breathing, tiny facial movement, and very small natural head motion.
-
-Keep Person 1’s facial expression close to the expression in Image 1. Do not make Person 1 open her mouth. Her mouth should remain closed, with a calm and natural expression. When Person 2’s hand touches her, Person 1 may show only a very slight natural reaction, such as a tiny eye movement or a minimal facial response, while keeping the overall expression soft and close to the original photo.
-
-After 2 seconds, the camera smoothly pans horizontally to the right for about 1 second, revealing Person 2 in their own position.
-
-As the camera starts moving right, Person 2’s hand briefly enters the frame and gently touches Person 1’s shoulder, or lightly touches Person 1’s arm/hand in a natural way, before the camera continues to Person 2.
-
-Then keep the camera on Person 2 for the remaining time. The final frame must clearly show Person 2 from Image 2, with the same room background from Image 1 still visible behind them.
-
-Person 2 must be exactly the same person as in Image 2: same face, same facial structure, same hairstyle, same identity. Do not generate a random or similar-looking person.
-
-Hands must be clean and realistic, with correct anatomy, natural finger shape, no extra fingers, and no visual artifacts.
-
-The camera movement must be only a smooth horizontal pan to the right. No cuts, no morphing, no replacement, no zoom, no vertical movement, no diagonal movement, and no background change.
-
-High realism, consistent identity, same shared room, same lighting, same environment, no face distortion, no hand distortion, no unknown person, no artifacts.`;
+const FAMILY_VIDEO_PROMPT = `Создай реалистичное видео по загруженному фото. Я сижу на стадионе среди зрителей, в той же позе и в той же обстановке, как на фото. Камера неподвижна, стоит на месте, без поворотов, без приближений, без тряски и без движения. Никакого slow motion — движение только в обычной естественной скорости. Сохрани моё лицо максимально точно, 1 в 1 как на оригинальном фото. Не изменяй надписи, табло, логотипы и весь текст, который уже есть в кадре. Сохрани атмосферу стадиона, синие сиденья, зрителей вокруг и общий ракурс как на фото. Я спокойно сижу с обьектом как на фото, а в кадре ощущение, будто меня снимает стадионная камера во время матча. Видео должно быть реалистичным, естественным и максимально похожим на оригинальный кадр.я немного трогаю свои волосы`;
 
 const TREND_MONTH_VIDEO_PROMPT = `Create a short realistic vertical trend video from this ready-made input photo.
 
@@ -2722,7 +2698,7 @@ async function createYooKassaFamilyVideoPayment(userId) {
   const price = Number(FAMILY_VIDEO_PRICE_RUB || 149);
   const priceValue = price.toFixed(2);
 
-  const description = "ТРЕНД МЕСЯЦА AI";
+  const description = "ТРЕНД МЕСЯЦА";
 
   const receipt = {
     customer: {
