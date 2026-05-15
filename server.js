@@ -278,10 +278,10 @@ const PHOTO_STYLES = {
       "Edit the photo into a futuristic night portrait with soft neon lighting, a modern techwear-style jacket, subtle city glow in the background, reflective urban atmosphere, and preserve the person’s face, hairstyle, and identity clearly and naturally."
   },
   fantasy: {
-    button: "🧝 ФЭНТЕЗИ",
-    title: "ФЭНТЕЗИ",
+    button: "🎮 ROBLOX",
+    title: "ROBLOX",
     prompt:
-      "Edit the photo into a dreamy fantasy-inspired portrait with a soft magical atmosphere, elegant storybook-style clothing, gentle glowing light, an enchanting background, and preserve the person’s face, hairstyle, and identity clearly and naturally."
+      "Transform the uploaded photo into a high-quality ROBLOX-style 3D avatar. Preserve the person’s main facial features, hairstyle, outfit, skin tone, and expression, but recreate them as a polished blocky ROBLOX character. Full-body view, clean studio background, premium game-avatar render, smooth plastic-like materials, sharp details, soft lighting, 4K quality. Avoid realism, anime, Pixar style, distorted face, bad proportions, or cropped body."
   }
 };
 
