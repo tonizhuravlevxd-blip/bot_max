@@ -99,7 +99,7 @@ const VIDEO_EXAMPLE_MAX_TOKEN = process.env.VIDEO_EXAMPLE_MAX_TOKEN || "";
 
 const FAMILY_VIDEO_EXAMPLE_URL =
   process.env.FAMILY_VIDEO_EXAMPLE_URL ||
-  "https://v3b.fal.media/files/b/0a99b80f/zgZltD-w8K311G1i-Djyd_video.mp4";
+  "https://v3b.fal.media/files/b/0a99ceed/sKwSVXJ_V6BPPPlDOLfNH_output.mp4";
 
 const FAMILY_VIDEO_EXAMPLE_MAX_TOKEN =
   process.env.FAMILY_VIDEO_EXAMPLE_MAX_TOKEN || "";
