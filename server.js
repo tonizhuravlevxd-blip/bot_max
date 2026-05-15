@@ -4135,7 +4135,7 @@ async function sendCreatePromptVideoHelp(target, userId) {
   }
 
   let text =
-    "📹 **Создать видео AI**\n\n" +
+    "📹 **Создать видео KLING**\n\n" +
     `Стоимость: **${Number(PROMPT_VIDEO_PRICE_RUB).toFixed(0)} ₽** за одно видео.\n\n` +
     "Что можно отправить:\n" +
     "• **просто промт** — создание видео с нуля;\n" +
