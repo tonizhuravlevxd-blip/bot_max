@@ -255,10 +255,10 @@ const PHOTO_STYLES = {
       "Edit the photo into a stylish formal portrait: dress the person in a modern tailored suit, create a clean studio or office-like background with soft professional lighting, confident natural pose, and preserve the same face, hairstyle, and identity with high accuracy."
   },
   cyberpunk: {
-    button: "🌃 КИБЕРПАНК",
-    title: "КИБЕРПАНК",
+    button: "🧸 МОИ СТИКЕРЫ",
+    title: "НАБОР СТИКЕРОВ",
     prompt:
-      "Edit the photo into a futuristic night portrait with soft neon lighting, a modern techwear-style jacket, subtle city glow in the background, reflective urban atmosphere, and preserve the person’s face, hairstyle, and identity clearly and naturally."
+      "Create a 4x4 cute cartoon sticker sheet using the uploaded photo as the only identity reference. Keep the same face, eyes, hairstyle, age and overall appearance in all 16 stickers. Style: modern kawaii Telegram stickers, soft pastel colors, clean rounded outlines, glossy eyes, subtle blush, white sticker border, soft shadow, warm off-white background, centered bust portraits, neat spacing. Only one text element: Russian header «МОИ СТИКЕРЫ» at the top. No captions, no English text, no watermark. Emotions from top-left to bottom-right: happy smile, shy, sleepy, excited, laughing, confused, blushing, proud, crying, cute angry pout, shocked, dramatic, chaotic panic, silly, overreacting, fully unhinged crazy smile."
   },
   fantasy: {
     button: "🎮 ROBLOX",
