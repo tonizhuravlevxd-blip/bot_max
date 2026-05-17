@@ -4636,11 +4636,11 @@ async function sendPremiumInfo(target, userId) {
     `**3️⃣ Оживить фото / видео по фото: ${PREMIUM_VIDEO_REQUEST_LIMIT} раз в день.**\n` +
     "**4️⃣ Уйдет обязательная подписка на каналы.**\n" +
     "**5️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
-    `• создать видео: **+${PREMIUM_BONUS_PROMPT_VIDEO_CREDITS}**;\n` +
-    `• создать карточку товара: **+${PREMIUM_BONUS_PRODUCT_CARD_CREDITS}**;\n` +
-    `• создать музыку: **+${PREMIUM_BONUS_MUSIC_CREDITS}**.\n\n` +
+    `•🎥создать видео: **+${PREMIUM_BONUS_PROMPT_VIDEO_CREDITS}**;\n` +
+    `•🛍️создать карточку товара: **+${PREMIUM_BONUS_PRODUCT_CARD_CREDITS}**;\n` +
+    `•🎶создать музыку: **+${PREMIUM_BONUS_MUSIC_CREDITS}**.\n\n` +
     "Кредиты **суммируются** при повторной покупке Premium. Если кредиты закончились — нужно купить Premium ещё раз.\n\n" +
-    "Ваши текущие кредиты:\n" +
+    "**Ваши текущие кредиты:**\n" +
     `• создать видео: **${promptVideoCredits}**;\n` +
     `• карточка товара: **${productCardCredits}**;\n` +
     `• музыка: **${musicCredits}**.\n\n` +
