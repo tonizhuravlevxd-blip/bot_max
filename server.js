@@ -7484,6 +7484,24 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
       return;
     }
 
+    if (isAdminUser(userId) && messageText.startsWith("/grantpremium")) {
+    const parts = messageText.split(/\s+/);
+    const targetUserId = parts[1];
+
+    if (!targetUserId) {
+        await sendMaxMessage(replyTarget, "❌ Укажите ID пользователя. Пример: /grantpremium 123456789");
+    } else {
+        // вызываем функцию для выдачи подписки
+        try {
+            const result = await grantPremium(userId, targetUserId);
+            await sendMaxMessage(replyTarget, `✅ Премиум подписка выдана пользователю ${result.userId} до ${new Date(result.premiumUntil).toLocaleString()}`);
+        } catch (err) {
+            await sendMaxMessage(replyTarget, `❌ Ошибка: ${err.message}`);
+        }
+    }
+    return; // чтобы команда не пошла дальше
+}
+
     if (["/reset", "/new", "/clear", "/сброс"].includes(userText.toLowerCase())) {
       clearChatContext(userId);
       clearUserImageMode(userId);
