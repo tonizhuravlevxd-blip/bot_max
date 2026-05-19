@@ -562,6 +562,53 @@ function isAdminUser(userId) {
   return ADMIN_USER_IDS.has(String(userId));
 }
 
+/**
+ * Добавляет премиум-подписку пользователю на месяц (30 дней)
+ * Только админ может использовать
+ * @param {string} adminUserId - ID админа
+ * @param {string} targetUserId - ID пользователя, которому даём подписку
+ */
+async function grantPremium(adminUserId, targetUserId) {
+  if (!isAdminUser(adminUserId)) {
+    throw new Error("⛔ Только администратор может выдавать подписку.");
+  }
+
+  if (!dbPool) {
+    throw new Error("⚠️ База данных не подключена.");
+  }
+
+  const now = new Date();
+  const premiumUntil = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000); // +30 дней
+
+  const query = `
+    INSERT INTO max_bot_premium_users (user_id, bot_key, premium_until, created_at, updated_at)
+    VALUES ($1, $2, $3, NOW(), NOW())
+    ON CONFLICT (user_id, bot_key)
+    DO UPDATE SET
+      premium_until = EXCLUDED.premium_until,
+      updated_at = NOW()
+    RETURNING premium_until
+  `;
+
+  const result = await dbPool.query(query, [targetUserId, BOT_KEY, premiumUntil.toISOString()]);
+
+  return {
+    success: true,
+    userId: targetUserId,
+    premiumUntil: result.rows[0].premium_until
+  };
+}
+
+async function handleAdminGrantCommand(adminUserId, targetUserId, replyTarget) {
+  try {
+    const result = await grantPremium(adminUserId, targetUserId);
+
+    await sendMaxMessage(replyTarget, `✅ Премиум подписка выдана пользователю ${result.userId} до ${new Date(result.premiumUntil).toLocaleString()}`);
+  } catch (err) {
+    await sendMaxMessage(replyTarget, `❌ Ошибка: ${err.message}`);
+  }
+}
+
 async function initBroadcastUsersDb() {
   if (!dbPool) return;
 
