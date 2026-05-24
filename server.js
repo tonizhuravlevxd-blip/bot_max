@@ -219,6 +219,7 @@ const MENU_HOROSCOPE_PAYLOAD = "menu_horoscope";
 const HOROSCOPE_PROFILE_PAYLOAD = "horoscope_profile";
 const HOROSCOPE_START_PAYLOAD = "horoscope_start";
 const HOROSCOPE_TODAY_PAYLOAD = "horoscope_today";
+const HOROSCOPE_TOMORROW_PAYLOAD = "horoscope_tomorrow";
 const HOROSCOPE_DAILY_ENABLE_PAYLOAD = "horoscope_daily_enable";
 const HOROSCOPE_DAILY_DISABLE_PAYLOAD = "horoscope_daily_disable";
 const HOROSCOPE_TIME_PAYLOAD_PREFIX = "horoscope_time:";
@@ -1002,6 +1003,17 @@ function buildHoroscopeMenuButtons(profile, premium) {
       }
     ]);
 
+    // Кнопка "на завтра" видна только Premium-пользователям
+    if (premium) {
+      buttons.push([
+        {
+          type: "callback",
+          text: "🌙 Гороскоп на завтра",
+          payload: HOROSCOPE_TOMORROW_PAYLOAD
+        }
+      ]);
+    }
+
     buttons.push([
       {
         type: "callback",
@@ -1129,30 +1141,16 @@ async function sendHoroscopeProfile(target, userId) {
     "Гороскоп на сегодня доступен бесплатно. Автоматическая ежедневная отправка работает только при активном Premium."
   ].join("\n");
 
-  return sendMaxMessageWithAttachments(target, text, [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons: [
-          [
-            {
-              type: "callback",
-              text: "🔮 Гороскоп на сегодня",
-              payload: HOROSCOPE_TODAY_PAYLOAD
-            }
-          ],
-          [
-            {
-              type: "callback",
-              text: "✏️ Изменить профиль",
-              payload: HOROSCOPE_START_PAYLOAD
-            }
-          ],
-          ...buildBackButtonKeyboard()
-        ]
-      }
+ const premium = await isPremiumUser(userId);
+
+return sendMaxMessageWithAttachments(target, text, [
+  {
+    type: "inline_keyboard",
+    payload: {
+      buttons: buildHoroscopeMenuButtons(profile, premium)
     }
-  ]);
+  }
+]);
 }
 
 async function startHoroscopeSetup(target, userId) {
@@ -1474,8 +1472,9 @@ function buildFallbackHoroscopeText(profile, sourceData, dateLabel) {
   ].filter(Boolean).join("\n");
 }
 
-async function buildHoroscopeText(profile) {
-  const dateYmd = getMoscowDateYmd();
+async function buildHoroscopeText(profile, dayOffset = 0) {
+  const date = new Date(Date.now() + Number(dayOffset || 0) * 24 * 60 * 60 * 1000);
+  const dateYmd = getMoscowDateYmd(date);
   const dateLabel = formatYmdRu(dateYmd);
 
   return buildHoroscopeFromEngine(profile, {
@@ -1515,13 +1514,95 @@ async function sendHoroscopeToday(target, userId) {
     return;
   }
 
-  const horoscopeText = await buildHoroscopeText(profile);
+  const horoscopeText = await buildHoroscopeText(profile, 0);
 
   return sendMaxMessageWithAttachments(target, horoscopeText, [
     {
       type: "inline_keyboard",
       payload: {
         buttons: buildHoroscopeMenuButtons(profile, await isPremiumUser(userId))
+      }
+    }
+  ]);
+}
+
+async function sendHoroscopeTomorrow(target, userId) {
+  const profile = await getHoroscopeProfile(userId);
+
+  if (!isHoroscopeProfileComplete(profile)) {
+    await sendMaxMessageWithAttachments(
+      target,
+      "Сначала заполните профиль гороскопа: дата рождения, имя и время публикации.",
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: [
+              [
+                {
+                  type: "callback",
+                  text: "▶️ Начать",
+                  payload: HOROSCOPE_START_PAYLOAD
+                }
+              ],
+              ...buildBackButtonKeyboard()
+            ]
+          }
+        }
+      ]
+    );
+    return;
+  }
+
+  const premium = await isPremiumUser(userId);
+
+  if (!premium) {
+    const buyUrl = buildPremiumBuyUrl(userId);
+    const buttons = [];
+
+    if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
+      buttons.push([
+        {
+          type: "link",
+          text: `💳 Купить Premium — ${Number(PREMIUM_PRICE_RUB).toFixed(0)} ₽`,
+          url: buyUrl
+        }
+      ]);
+    }
+
+    buttons.push([
+      {
+        type: "callback",
+        text: "⬅️ Назад к гороскопу",
+        payload: MENU_HOROSCOPE_PAYLOAD
+      }
+    ]);
+
+    await sendMaxMessageWithAttachments(
+      target,
+      [
+        "🌙 **Гороскоп на завтра — Premium-функция**",
+        "",
+        "Гороскоп на сегодня доступен бесплатно.",
+        "Прогноз на завтра открывается только при активном Premium."
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: { buttons }
+        }
+      ]
+    );
+    return;
+  }
+
+  const horoscopeText = await buildHoroscopeText(profile, 1);
+
+  return sendMaxMessageWithAttachments(target, horoscopeText, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildHoroscopeMenuButtons(profile, true)
       }
     }
   ]);
@@ -8679,6 +8760,13 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         await sendHoroscopeToday(target, userId);
         return;
       }
+
+  if (callbackPayload === HOROSCOPE_TOMORROW_PAYLOAD) {
+  clearUserImageMode(userId);
+
+  await sendHoroscopeTomorrow(target, userId);
+  return;
+}
 
       if (callbackPayload === HOROSCOPE_DAILY_ENABLE_PAYLOAD) {
         clearUserImageMode(userId);
