@@ -214,6 +214,13 @@ const MENU_PREMIUM_PAYLOAD = "menu_premium";
 const MENU_SPONSORS_PAYLOAD = "menu_sponsors";
 const MENU_BACK_PAYLOAD = "menu_back";
 const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
+const MENU_HOROSCOPE_PAYLOAD = "menu_horoscope";
+const HOROSCOPE_PROFILE_PAYLOAD = "horoscope_profile";
+const HOROSCOPE_START_PAYLOAD = "horoscope_start";
+const HOROSCOPE_TODAY_PAYLOAD = "horoscope_today";
+const HOROSCOPE_DAILY_ENABLE_PAYLOAD = "horoscope_daily_enable";
+const HOROSCOPE_DAILY_DISABLE_PAYLOAD = "horoscope_daily_disable";
+const HOROSCOPE_TIME_PAYLOAD_PREFIX = "horoscope_time:";
 
 
 const IMAGE_MODE_RESTORATION = "restoration";
@@ -438,8 +445,1278 @@ function isRestorationMode(userId) {
   return getUserImageMode(userId) === IMAGE_MODE_RESTORATION;
 }
 
+
 function isProductCardMode(userId) {
   return getUserImageMode(userId) === IMAGE_MODE_PRODUCT_CARD;
+}
+
+const HOROSCOPE_DEFAULT_PUBLISH_TIME_MSK = String(
+  process.env.HOROSCOPE_DEFAULT_PUBLISH_TIME_MSK || "08:00"
+).trim();
+const HOROSCOPE_DAILY_POLL_MS = Number(
+  process.env.HOROSCOPE_DAILY_POLL_MS || 60_000
+);
+const HOROSCOPE_DB_CLEANUP_MS = Number(
+  process.env.HOROSCOPE_DB_CLEANUP_MS || 6 * 60 * 60 * 1000
+);
+const HOROSCOPE_FETCH_TIMEOUT_MS = Number(
+  process.env.HOROSCOPE_FETCH_TIMEOUT_MS || 12_000
+);
+const HOROSCOPE_SOURCE_URL =
+  process.env.HOROSCOPE_SOURCE_URL || "https://aztro.sameerkumar.website/";
+
+const HOROSCOPE_SIGNS = {
+  aries: {
+    ru: "Овен",
+    dateRange: "21 марта — 19 апреля"
+  },
+  taurus: {
+    ru: "Телец",
+    dateRange: "20 апреля — 20 мая"
+  },
+  gemini: {
+    ru: "Близнецы",
+    dateRange: "21 мая — 20 июня"
+  },
+  cancer: {
+    ru: "Рак",
+    dateRange: "21 июня — 22 июля"
+  },
+  leo: {
+    ru: "Лев",
+    dateRange: "23 июля — 22 августа"
+  },
+  virgo: {
+    ru: "Дева",
+    dateRange: "23 августа — 22 сентября"
+  },
+  libra: {
+    ru: "Весы",
+    dateRange: "23 сентября — 22 октября"
+  },
+  scorpio: {
+    ru: "Скорпион",
+    dateRange: "23 октября — 21 ноября"
+  },
+  sagittarius: {
+    ru: "Стрелец",
+    dateRange: "22 ноября — 21 декабря"
+  },
+  capricorn: {
+    ru: "Козерог",
+    dateRange: "22 декабря — 19 января"
+  },
+  aquarius: {
+    ru: "Водолей",
+    dateRange: "20 января — 18 февраля"
+  },
+  pisces: {
+    ru: "Рыбы",
+    dateRange: "19 февраля — 20 марта"
+  }
+};
+
+const horoscopeSetupStates = new Map();
+// Бесплатные профили гороскопа НЕ пишем в БД: держим только во временной памяти.
+const horoscopeProfilesMemory = new Map();
+const HOROSCOPE_FREE_PROFILE_TTL_MS = Number(
+  process.env.HOROSCOPE_FREE_PROFILE_TTL_MS || 24 * 60 * 60 * 1000
+);
+let horoscopeDailyPublisherStarted = false;
+let horoscopeDailyPublisherRunning = false;
+
+function getHoroscopeMemoryProfile(userId) {
+  const key = getUserRequestKey(userId);
+  const entry = horoscopeProfilesMemory.get(key);
+
+  if (!entry) return null;
+
+  const expiresAt = Number(entry.expiresAt || 0);
+
+  if (expiresAt && Date.now() > expiresAt) {
+    horoscopeProfilesMemory.delete(key);
+    return null;
+  }
+
+  return normalizeHoroscopeProfile(entry.profile || entry);
+}
+
+function setHoroscopeMemoryProfile(userId, profile) {
+  const key = getUserRequestKey(userId);
+  const normalizedProfile = normalizeHoroscopeProfile({
+    ...profile,
+    user_id: key,
+    bot_key: BOT_KEY,
+    daily_enabled: false,
+    last_sent_date: null
+  });
+
+  horoscopeProfilesMemory.set(key, {
+    profile: normalizedProfile,
+    expiresAt: Date.now() + HOROSCOPE_FREE_PROFILE_TTL_MS
+  });
+
+  return normalizedProfile;
+}
+
+function deleteHoroscopeMemoryProfile(userId) {
+  horoscopeProfilesMemory.delete(getUserRequestKey(userId));
+}
+
+setInterval(() => {
+  const now = Date.now();
+
+  for (const [userId, entry] of horoscopeProfilesMemory.entries()) {
+    if (Number(entry?.expiresAt || 0) <= now) {
+      horoscopeProfilesMemory.delete(userId);
+    }
+  }
+}, 60 * 60_000).unref?.();
+
+function getHoroscopeStateKey(userId) {
+  return String(userId || "unknown");
+}
+
+function setHoroscopeSetupState(userId, state) {
+  horoscopeSetupStates.set(getHoroscopeStateKey(userId), {
+    ...state,
+    updatedAt: Date.now()
+  });
+}
+
+function getHoroscopeSetupState(userId) {
+  const key = getHoroscopeStateKey(userId);
+  const state = horoscopeSetupStates.get(key);
+
+  if (!state) return null;
+
+  const ttlMs = Number(process.env.HOROSCOPE_SETUP_TTL_MS || 20 * 60_000);
+
+  if (Date.now() - Number(state.updatedAt || 0) > ttlMs) {
+    horoscopeSetupStates.delete(key);
+    return null;
+  }
+
+  return state;
+}
+
+function clearHoroscopeSetupState(userId) {
+  horoscopeSetupStates.delete(getHoroscopeStateKey(userId));
+}
+
+function sanitizeHoroscopeName(value) {
+  return String(value || "")
+    .replace(/[\r\n*_`[\]()~>#+\-=|{}]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60);
+}
+
+function normalizeHoroscopeDateValue(value) {
+  if (!value) return "";
+
+  if (value instanceof Date && !Number.isNaN(value.getTime())) {
+    return value.toISOString().slice(0, 10);
+  }
+
+  return String(value).slice(0, 10);
+}
+
+function parseBirthDate(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{1,2})[.\-/\s](\d{1,2})[.\-/\s](\d{4})$/);
+
+  if (!match) return null;
+
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const year = Number(match[3]);
+  const currentYear = new Date().getUTCFullYear();
+
+  if (year < 1900 || year > currentYear || month < 1 || month > 12 || day < 1 || day > 31) {
+    return null;
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 ||
+    date.getUTCDate() !== day
+  ) {
+    return null;
+  }
+
+  return {
+    iso: date.toISOString().slice(0, 10),
+    day,
+    month,
+    year
+  };
+}
+
+function getZodiacSignByDate(day, month) {
+  const mmdd = month * 100 + day;
+
+  if (mmdd >= 321 && mmdd <= 419) return "aries";
+  if (mmdd >= 420 && mmdd <= 520) return "taurus";
+  if (mmdd >= 521 && mmdd <= 620) return "gemini";
+  if (mmdd >= 621 && mmdd <= 722) return "cancer";
+  if (mmdd >= 723 && mmdd <= 822) return "leo";
+  if (mmdd >= 823 && mmdd <= 922) return "virgo";
+  if (mmdd >= 923 && mmdd <= 1022) return "libra";
+  if (mmdd >= 1023 && mmdd <= 1121) return "scorpio";
+  if (mmdd >= 1122 && mmdd <= 1221) return "sagittarius";
+  if (mmdd >= 1222 || mmdd <= 119) return "capricorn";
+  if (mmdd >= 120 && mmdd <= 218) return "aquarius";
+  return "pisces";
+}
+
+function getHoroscopeSignRu(sign) {
+  return HOROSCOPE_SIGNS[String(sign || "")]?.ru || "не указан";
+}
+
+function getHoroscopeSignRange(sign) {
+  return HOROSCOPE_SIGNS[String(sign || "")]?.dateRange || "";
+}
+
+function formatBirthDateForUser(value) {
+  const iso = normalizeHoroscopeDateValue(value);
+  if (!iso) return "не указана";
+
+  const [year, month, day] = iso.split("-");
+  return `${day}.${month}.${year}`;
+}
+
+function getMoscowDateYmd(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Europe/Moscow",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  }).formatToParts(date);
+
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.year}-${value.month}-${value.day}`;
+}
+
+function getMoscowTimeHHMM(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/Moscow",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false
+  }).formatToParts(date);
+
+  const value = Object.fromEntries(parts.map((part) => [part.type, part.value]));
+  return `${value.hour}:${value.minute}`;
+}
+
+function formatYmdRu(ymd) {
+  const clean = String(ymd || "").slice(0, 10);
+  const match = clean.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) return clean;
+
+  return `${match[3]}.${match[2]}.${match[1]}`;
+}
+
+function parsePublishTimeMsk(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{1,2})(?::|\.)(\d{2})$/) || text.match(/^(\d{1,2})$/);
+
+  if (!match) return null;
+
+  const hour = Number(match[1]);
+  const minute = match[2] === undefined ? 0 : Number(match[2]);
+
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+function normalizeHoroscopeProfile(row) {
+  if (!row) return null;
+
+  return {
+    user_id: String(row.user_id || ""),
+    bot_key: String(row.bot_key || BOT_KEY),
+    name: sanitizeHoroscopeName(row.name || ""),
+    birth_date: normalizeHoroscopeDateValue(row.birth_date),
+    zodiac_sign: String(row.zodiac_sign || ""),
+    publish_time_msk: parsePublishTimeMsk(row.publish_time_msk) || HOROSCOPE_DEFAULT_PUBLISH_TIME_MSK,
+    daily_enabled: Boolean(row.daily_enabled),
+    last_sent_date: normalizeHoroscopeDateValue(row.last_sent_date),
+    created_at: row.created_at || null,
+    updated_at: row.updated_at || null
+  };
+}
+
+function isHoroscopeProfileComplete(profile) {
+  return Boolean(
+    profile &&
+    sanitizeHoroscopeName(profile.name) &&
+    normalizeHoroscopeDateValue(profile.birth_date) &&
+    HOROSCOPE_SIGNS[String(profile.zodiac_sign || "")]
+  );
+}
+
+async function initHoroscopeDb() {
+  if (!dbPool) return;
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS max_bot_horoscope_profiles (
+      user_id TEXT NOT NULL,
+      bot_key TEXT NOT NULL,
+      name TEXT,
+      birth_date DATE,
+      zodiac_sign TEXT,
+      publish_time_msk TEXT NOT NULL DEFAULT '08:00',
+      daily_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+      last_sent_date DATE,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (user_id, bot_key)
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_horoscope_daily
+    ON max_bot_horoscope_profiles (bot_key, daily_enabled, publish_time_msk, last_sent_date)
+  `);
+
+  await cleanupNonPremiumHoroscopeProfilesFromDb();
+
+  console.log("Horoscope DB initialized: only active Premium horoscope profiles are persisted");
+}
+
+async function cleanupNonPremiumHoroscopeProfilesFromDb() {
+  if (!dbPool) return 0;
+
+  const result = await dbPool.query(
+    `
+      DELETE FROM max_bot_horoscope_profiles h
+      WHERE h.bot_key = $1
+        AND NOT EXISTS (
+          SELECT 1
+          FROM max_bot_premium_users p
+          WHERE p.user_id = h.user_id
+            AND p.bot_key = h.bot_key
+            AND p.premium_until > NOW()
+        )
+    `,
+    [BOT_KEY]
+  );
+
+  return Number(result.rowCount || 0);
+}
+
+async function getPersistedPremiumHoroscopeProfile(userId) {
+  if (!dbPool) return null;
+
+  const key = getUserRequestKey(userId);
+
+  const result = await dbPool.query(
+    `
+      SELECT h.user_id, h.bot_key, h.name, h.birth_date, h.zodiac_sign, h.publish_time_msk,
+             h.daily_enabled, h.last_sent_date, h.created_at, h.updated_at
+      FROM max_bot_horoscope_profiles h
+      INNER JOIN max_bot_premium_users p
+        ON p.user_id = h.user_id
+       AND p.bot_key = h.bot_key
+       AND p.premium_until > NOW()
+      WHERE h.user_id = $1 AND h.bot_key = $2
+      LIMIT 1
+    `,
+    [key, BOT_KEY]
+  );
+
+  return normalizeHoroscopeProfile(result.rows[0]);
+}
+
+async function getHoroscopeProfile(userId) {
+  const persistedProfile = await getPersistedPremiumHoroscopeProfile(userId);
+
+  if (persistedProfile) {
+    return persistedProfile;
+  }
+
+  return getHoroscopeMemoryProfile(userId);
+}
+
+async function upsertPersistedPremiumHoroscopeProfile(userId, profileData) {
+  if (!dbPool) {
+    return setHoroscopeMemoryProfile(userId, profileData);
+  }
+
+  const key = getUserRequestKey(userId);
+  const profile = normalizeHoroscopeProfile({
+    ...profileData,
+    user_id: key,
+    bot_key: BOT_KEY
+  });
+
+  const result = await dbPool.query(
+    `
+      INSERT INTO max_bot_horoscope_profiles (
+        user_id, bot_key, name, birth_date, zodiac_sign, publish_time_msk,
+        daily_enabled, last_sent_date
+      )
+      SELECT $1, $2, $3, $4, $5, $6, $7, $8
+      WHERE EXISTS (
+        SELECT 1
+        FROM max_bot_premium_users p
+        WHERE p.user_id = $1
+          AND p.bot_key = $2
+          AND p.premium_until > NOW()
+      )
+      ON CONFLICT (user_id, bot_key)
+      DO UPDATE SET
+        name = EXCLUDED.name,
+        birth_date = EXCLUDED.birth_date,
+        zodiac_sign = EXCLUDED.zodiac_sign,
+        publish_time_msk = EXCLUDED.publish_time_msk,
+        daily_enabled = EXCLUDED.daily_enabled,
+        last_sent_date = EXCLUDED.last_sent_date,
+        updated_at = NOW()
+      RETURNING user_id, bot_key, name, birth_date, zodiac_sign, publish_time_msk,
+                daily_enabled, last_sent_date, created_at, updated_at
+    `,
+    [
+      key,
+      BOT_KEY,
+      profile.name || null,
+      profile.birth_date || null,
+      profile.zodiac_sign || null,
+      profile.publish_time_msk || HOROSCOPE_DEFAULT_PUBLISH_TIME_MSK,
+      Boolean(profile.daily_enabled),
+      profile.last_sent_date || null
+    ]
+  );
+
+  return normalizeHoroscopeProfile(result.rows[0]);
+}
+
+async function upsertHoroscopeProfile(userId, data) {
+  const current = (await getHoroscopeProfile(userId)) || {};
+  const profile = normalizeHoroscopeProfile({
+    ...current,
+    user_id: getUserRequestKey(userId),
+    bot_key: BOT_KEY,
+    ...data
+  });
+
+  if (await isPremiumUser(userId)) {
+    const persistedProfile = await upsertPersistedPremiumHoroscopeProfile(userId, profile);
+
+    if (persistedProfile) {
+      deleteHoroscopeMemoryProfile(userId);
+      return persistedProfile;
+    }
+  }
+
+  // Бесплатных пользователей не сохраняем в БД: профиль живет только 24 часа в памяти процесса.
+  return setHoroscopeMemoryProfile(userId, {
+    ...profile,
+    daily_enabled: false,
+    last_sent_date: null
+  });
+}
+
+async function persistTemporaryHoroscopeProfileForPremiumUser(userId) {
+  if (!dbPool) return null;
+
+  const temporaryProfile = getHoroscopeMemoryProfile(userId);
+
+  if (!isHoroscopeProfileComplete(temporaryProfile)) {
+    return null;
+  }
+
+  const persistedProfile = await upsertPersistedPremiumHoroscopeProfile(userId, {
+    ...temporaryProfile,
+    daily_enabled: false,
+    last_sent_date: null
+  });
+
+  if (persistedProfile) {
+    deleteHoroscopeMemoryProfile(userId);
+  }
+
+  return persistedProfile;
+}
+
+async function setHoroscopeDailyEnabled(userId, enabled) {
+  const current = (await getHoroscopeProfile(userId)) || {};
+
+  if (enabled && !(await isPremiumUser(userId))) {
+    return setHoroscopeMemoryProfile(userId, {
+      ...current,
+      daily_enabled: false,
+      last_sent_date: null
+    });
+  }
+
+  if (await isPremiumUser(userId)) {
+    const persistedProfile = await upsertPersistedPremiumHoroscopeProfile(userId, {
+      ...current,
+      daily_enabled: Boolean(enabled)
+    });
+
+    if (persistedProfile) {
+      deleteHoroscopeMemoryProfile(userId);
+      return persistedProfile;
+    }
+  }
+
+  return setHoroscopeMemoryProfile(userId, {
+    ...current,
+    daily_enabled: false,
+    last_sent_date: null
+  });
+}
+
+function buildHoroscopeMenuButtons(profile, premium) {
+  const complete = isHoroscopeProfileComplete(profile);
+  const buttons = [
+    [
+      {
+        type: "callback",
+        text: "👤 Профиль",
+        payload: HOROSCOPE_PROFILE_PAYLOAD
+      },
+      {
+        type: "callback",
+        text: complete ? "✏️ Изменить" : "▶️ Начать",
+        payload: HOROSCOPE_START_PAYLOAD
+      }
+    ]
+  ];
+
+  if (complete) {
+    buttons.push([
+      {
+        type: "callback",
+        text: "🔮 Гороскоп на сегодня",
+        payload: HOROSCOPE_TODAY_PAYLOAD
+      }
+    ]);
+
+    buttons.push([
+      {
+        type: "callback",
+        text: profile.daily_enabled
+          ? `🔕 Отключить ежедневный прогноз ${profile.publish_time_msk} МСК`
+          : `⏰ Ежедневный прогноз ${profile.publish_time_msk} МСК`,
+        payload: profile.daily_enabled
+          ? HOROSCOPE_DAILY_DISABLE_PAYLOAD
+          : HOROSCOPE_DAILY_ENABLE_PAYLOAD
+      }
+    ]);
+  }
+
+  if (!premium) {
+    const buyUrl = buildPremiumBuyUrl(profile?.user_id || "");
+
+    if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
+      buttons.push([
+        {
+          type: "link",
+          text: `💳 Купить Premium — ${Number(PREMIUM_PRICE_RUB).toFixed(0)} ₽`,
+          url: buyUrl
+        }
+      ]);
+    } else {
+      buttons.push([
+        {
+          type: "callback",
+          text: "💵 Купить Премиум",
+          payload: MENU_PREMIUM_PAYLOAD
+        }
+      ]);
+    }
+  }
+
+  buttons.push([
+    {
+      type: "callback",
+      text: "⬅️ Назад к меню",
+      payload: MENU_BACK_PAYLOAD
+    }
+  ]);
+
+  return buttons;
+}
+
+async function sendHoroscopeMenu(target, userId) {
+  const profile = await getHoroscopeProfile(userId);
+  const premium = await isPremiumUser(userId);
+  const complete = isHoroscopeProfileComplete(profile);
+
+  let text = [
+    "🌙 **Премиум Гороскоп**",
+    "",
+    "Здесь можно бесплатно заполнить профиль и получить гороскоп на сегодня.",
+    "Ежедневная автоматическая отправка прогноза доступна по Premium."
+  ].join("\n");
+
+  if (complete) {
+    text += [
+      "",
+      "**Ваш профиль:**",
+      `• имя: **${profile.name}**;`,
+      `• дата рождения: **${formatBirthDateForUser(profile.birth_date)}**;`,
+      `• знак зодиака: **${getHoroscopeSignRu(profile.zodiac_sign)}**;`,
+      `• время публикации: **${profile.publish_time_msk} МСК**;`,
+      `• ежедневный прогноз: **${profile.daily_enabled ? "включён" : "выключен"}**.`
+    ].join("\n");
+  } else {
+    text += "\n\nПрофиль пока не заполнен. Нажмите **Начать**.";
+  }
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildHoroscopeMenuButtons(profile || { user_id: userId }, premium)
+      }
+    }
+  ]);
+}
+
+async function sendHoroscopeProfile(target, userId) {
+  const profile = await getHoroscopeProfile(userId);
+
+  if (!isHoroscopeProfileComplete(profile)) {
+    return sendMaxMessageWithAttachments(
+      target,
+      [
+        "👤 **Профиль гороскопа**",
+        "",
+        "Профиль пока не заполнен.",
+        "Нажмите **Начать**, укажите дату рождения, имя и время ежедневной публикации по МСК."
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: [
+              [
+                {
+                  type: "callback",
+                  text: "▶️ Начать",
+                  payload: HOROSCOPE_START_PAYLOAD
+                }
+              ],
+              ...buildBackButtonKeyboard()
+            ]
+          }
+        }
+      ]
+    );
+  }
+
+  const text = [
+    "👤 **Профиль гороскопа**",
+    "",
+    `Имя: **${profile.name}**`,
+    `Дата рождения: **${formatBirthDateForUser(profile.birth_date)}**`,
+    `Знак зодиака: **${getHoroscopeSignRu(profile.zodiac_sign)}**`,
+    `Диапазон знака: ${getHoroscopeSignRange(profile.zodiac_sign)}`,
+    `Время публикации: **${profile.publish_time_msk} МСК**`,
+    `Ежедневный прогноз: **${profile.daily_enabled ? "включён" : "выключен"}**`,
+    "",
+    "Гороскоп на сегодня доступен бесплатно. Автоматическая ежедневная отправка работает только при активном Premium."
+  ].join("\n");
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: [
+          [
+            {
+              type: "callback",
+              text: "🔮 Гороскоп на сегодня",
+              payload: HOROSCOPE_TODAY_PAYLOAD
+            }
+          ],
+          [
+            {
+              type: "callback",
+              text: "✏️ Изменить профиль",
+              payload: HOROSCOPE_START_PAYLOAD
+            }
+          ],
+          ...buildBackButtonKeyboard()
+        ]
+      }
+    }
+  ]);
+}
+
+async function startHoroscopeSetup(target, userId) {
+  clearUserImageMode(userId);
+  clearHoroscopeSetupState(userId);
+
+  setHoroscopeSetupState(userId, {
+    step: "birth_date",
+    draft: {}
+  });
+
+  return sendMaxMessageWithAttachments(
+    target,
+    [
+      "🌙 **Настроим гороскоп под вас**",
+      "",
+      "Сначала напишите полную дату рождения в формате **ДД.ММ.ГГГГ**.",
+      "",
+      "Пример: `14.08.2001`"
+    ].join("\n"),
+    [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildBackButtonKeyboard()
+        }
+      }
+    ]
+  );
+}
+
+async function finishHoroscopeSetup(target, userId, draft, publishTimeMsk) {
+  const profile = await upsertHoroscopeProfile(userId, {
+    name: draft.name,
+    birth_date: draft.birth_date,
+    zodiac_sign: draft.zodiac_sign,
+    publish_time_msk: publishTimeMsk,
+    daily_enabled: false,
+    last_sent_date: null
+  });
+
+  clearHoroscopeSetupState(userId);
+
+  const text = [
+    "✅ **Профиль гороскопа заполнен**",
+    "",
+    `Имя: **${profile.name}**`,
+    `Дата рождения: **${formatBirthDateForUser(profile.birth_date)}**`,
+    `Знак зодиака: **${getHoroscopeSignRu(profile.zodiac_sign)}**`,
+    `Время публикации: **${profile.publish_time_msk} МСК**`,
+    "",
+    "Теперь можно бесплатно получить **гороскоп на сегодня**.",
+    "Чтобы прогноз автоматически приходил каждый день в выбранное время, нужен **Premium**."
+  ].join("\n");
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: [
+          [
+            {
+              type: "callback",
+              text: "🔮 Гороскоп на сегодня",
+              payload: HOROSCOPE_TODAY_PAYLOAD
+            }
+          ],
+          [
+            {
+              type: "callback",
+              text: "⏰ Включить ежедневный прогноз",
+              payload: HOROSCOPE_DAILY_ENABLE_PAYLOAD
+            }
+          ],
+          ...buildBackButtonKeyboard()
+        ]
+      }
+    }
+  ]);
+}
+
+async function handleHoroscopeTimeButton(target, userId, payload) {
+  const state = getHoroscopeSetupState(userId);
+  const publishTimeMsk = parsePublishTimeMsk(
+    String(payload || "").slice(HOROSCOPE_TIME_PAYLOAD_PREFIX.length)
+  );
+
+  if (!state || state.step !== "publish_time" || !publishTimeMsk) {
+    await sendMaxMessage(target, "Эта кнопка настройки устарела. Нажмите «Премиум Гороскоп» → «Начать» ещё раз.");
+    return true;
+  }
+
+  await finishHoroscopeSetup(target, userId, state.draft || {}, publishTimeMsk);
+  return true;
+}
+
+async function handleHoroscopeTextInput(target, userId, userText) {
+  const state = getHoroscopeSetupState(userId);
+
+  if (!state) return false;
+
+  const text = String(userText || "").trim();
+
+  if (!text) {
+    await sendMaxMessage(target, "Напишите текстом ответ для настройки профиля гороскопа.");
+    return true;
+  }
+
+  if (state.step === "birth_date") {
+    const parsed = parseBirthDate(text);
+
+    if (!parsed) {
+      await sendMaxMessage(
+        target,
+        "Не понял дату. Напишите полную дату рождения в формате **ДД.ММ.ГГГГ**. Например: `14.08.2001`."
+      );
+      return true;
+    }
+
+    const zodiacSign = getZodiacSignByDate(parsed.day, parsed.month);
+
+    setHoroscopeSetupState(userId, {
+      step: "name",
+      draft: {
+        birth_date: parsed.iso,
+        zodiac_sign: zodiacSign
+      }
+    });
+
+    await sendMaxMessage(
+      target,
+      [
+        `Дата принята: **${formatBirthDateForUser(parsed.iso)}**.`,
+        `Ваш знак зодиака: **${getHoroscopeSignRu(zodiacSign)}**.`,
+        "",
+        "Теперь напишите имя. Оно будет использоваться в профиле, чтобы прогноз выглядел точнее и был настроен под вас."
+      ].join("\n")
+    );
+
+    return true;
+  }
+
+  if (state.step === "name") {
+    const name = sanitizeHoroscopeName(text);
+
+    if (name.length < 2) {
+      await sendMaxMessage(target, "Имя слишком короткое. Напишите имя ещё раз.");
+      return true;
+    }
+
+    setHoroscopeSetupState(userId, {
+      step: "publish_time",
+      draft: {
+        ...(state.draft || {}),
+        name
+      }
+    });
+
+    await sendMaxMessageWithAttachments(
+      target,
+      [
+        `Принято, **${name}**.`,
+        "",
+        "Теперь укажите время ежедневной публикации гороскопа по МСК.",
+        "",
+        "Например: `08:00`"
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: [
+              [
+                {
+                  type: "callback",
+                  text: "⏰ 08:00 МСК",
+                  payload: `${HOROSCOPE_TIME_PAYLOAD_PREFIX}08:00`
+                }
+              ],
+              [
+                {
+                  type: "callback",
+                  text: "⏰ 09:00 МСК",
+                  payload: `${HOROSCOPE_TIME_PAYLOAD_PREFIX}09:00`
+                },
+                {
+                  type: "callback",
+                  text: "⏰ 10:00 МСК",
+                  payload: `${HOROSCOPE_TIME_PAYLOAD_PREFIX}10:00`
+                }
+              ],
+              ...buildBackButtonKeyboard()
+            ]
+          }
+        }
+      ]
+    );
+
+    return true;
+  }
+
+  if (state.step === "publish_time") {
+    const publishTimeMsk = parsePublishTimeMsk(text);
+
+    if (!publishTimeMsk) {
+      await sendMaxMessage(target, "Не понял время. Напишите в формате **08:00** или просто **8**.");
+      return true;
+    }
+
+    await finishHoroscopeSetup(target, userId, state.draft || {}, publishTimeMsk);
+    return true;
+  }
+
+  clearHoroscopeSetupState(userId);
+  return false;
+}
+
+async function fetchDailyHoroscope(sign) {
+  const cleanSign = String(sign || "").trim().toLowerCase();
+
+  if (!HOROSCOPE_SIGNS[cleanSign]) {
+    throw new Error("Неизвестный знак зодиака для гороскопа.");
+  }
+
+  const url = new URL(HOROSCOPE_SOURCE_URL);
+  url.searchParams.set("sign", cleanSign);
+  url.searchParams.set("day", "today");
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), HOROSCOPE_FETCH_TIMEOUT_MS);
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      signal: controller.signal
+    });
+
+    const data = await response.json().catch(() => null);
+
+    if (!response.ok || !data) {
+      throw new Error(`Horoscope API ${response.status}: ${JSON.stringify(data)}`);
+    }
+
+    return data;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function rewriteHoroscopeToRussian(profile, sourceData, dateLabel) {
+  if (!OPENAI_API_KEY) return "";
+
+  const signRu = getHoroscopeSignRu(profile.zodiac_sign);
+  const prompt = [
+    "Составь короткий ежедневный гороскоп на русском языке для пользователя бота.",
+    "Используй только данные источника ниже, не обещай гарантированных событий и не давай медицинских/финансовых инструкций.",
+    "Тон: дружелюбный, живой, 5-7 предложений, без длинных списков.",
+    "Обязательно упомяни, что это развлекательный прогноз.",
+    "",
+    `Имя: ${profile.name}`,
+    `Знак: ${signRu}`,
+    `Дата прогноза: ${dateLabel}`,
+    `Источник: ${JSON.stringify(sourceData)}`
+  ].join("\n");
+
+  const response = await fetch(`${OPENAI_API_BASE}/responses`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: JSON.stringify({
+      model: OPENAI_MODEL,
+      input: [
+        {
+          role: "system",
+          content: "Ты редактор коротких гороскопов для мессенджера. Пиши по-русски, аккуратно и без мистических гарантий."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ]
+    })
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    console.warn("OpenAI horoscope rewrite failed:", response.status, JSON.stringify(data));
+    return "";
+  }
+
+  return extractOpenAIText(data).trim();
+}
+
+function buildFallbackHoroscopeText(profile, sourceData, dateLabel) {
+  const signRu = getHoroscopeSignRu(profile.zodiac_sign);
+  const sourceDescription = String(sourceData?.description || "").trim();
+  const luckyNumber = String(sourceData?.lucky_number || "").trim();
+  const luckyTime = String(sourceData?.lucky_time || "").trim();
+  const mood = String(sourceData?.mood || "").trim();
+  const color = String(sourceData?.color || "").trim();
+
+  return [
+    `🔮 **Гороскоп на ${dateLabel}**`,
+    "",
+    `${profile.name}, ваш знак — **${signRu}**.`,
+    sourceDescription
+      ? `Прогноз источника: ${sourceDescription}`
+      : "Сегодня лучше действовать спокойно, не спешить с выводами и внимательно выбирать слова.",
+    "",
+    luckyNumber ? `Счастливое число: **${luckyNumber}**` : "",
+    luckyTime ? `Удачное время: **${luckyTime}**` : "",
+    mood ? `Настроение дня: **${mood}**` : "",
+    color ? `Цвет дня: **${color}**` : "",
+    "",
+    "Это развлекательный прогноз, а не точное предсказание."
+  ].filter(Boolean).join("\n");
+}
+
+async function buildHoroscopeText(profile) {
+  const dateYmd = getMoscowDateYmd();
+  const dateLabel = formatYmdRu(dateYmd);
+  const sourceData = await fetchDailyHoroscope(profile.zodiac_sign);
+  const aiText = await rewriteHoroscopeToRussian(profile, sourceData, dateLabel);
+
+  if (aiText) {
+    return [
+      `🔮 **Гороскоп на ${dateLabel}**`,
+      "",
+      aiText,
+      "",
+      "Источник прогноза: Aztro daily horoscope API."
+    ].join("\n");
+  }
+
+  return buildFallbackHoroscopeText(profile, sourceData, dateLabel);
+}
+
+async function sendHoroscopeToday(target, userId) {
+  const profile = await getHoroscopeProfile(userId);
+
+  if (!isHoroscopeProfileComplete(profile)) {
+    await sendMaxMessageWithAttachments(
+      target,
+      "Сначала заполните профиль гороскопа: дата рождения, имя и время публикации.",
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: [
+              [
+                {
+                  type: "callback",
+                  text: "▶️ Начать",
+                  payload: HOROSCOPE_START_PAYLOAD
+                }
+              ],
+              ...buildBackButtonKeyboard()
+            ]
+          }
+        }
+      ]
+    );
+    return;
+  }
+
+  const horoscopeText = await buildHoroscopeText(profile);
+
+  return sendMaxMessageWithAttachments(target, horoscopeText, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildHoroscopeMenuButtons(profile, await isPremiumUser(userId))
+      }
+    }
+  ]);
+}
+
+async function enableHoroscopeDaily(target, userId) {
+  const profile = await getHoroscopeProfile(userId);
+
+  if (!isHoroscopeProfileComplete(profile)) {
+    await sendMaxMessage(target, "Сначала заполните профиль гороскопа.");
+    await startHoroscopeSetup(target, userId);
+    return;
+  }
+
+  const premium = await isPremiumUser(userId);
+
+  if (!premium) {
+    const buyUrl = buildPremiumBuyUrl(userId);
+    const buttons = [];
+
+    if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
+      buttons.push([
+        {
+          type: "link",
+          text: `💳 Купить Premium — ${Number(PREMIUM_PRICE_RUB).toFixed(0)} ₽`,
+          url: buyUrl
+        }
+      ]);
+    }
+
+    buttons.push([
+      {
+        type: "callback",
+        text: "⬅️ Назад к гороскопу",
+        payload: MENU_HOROSCOPE_PAYLOAD
+      }
+    ]);
+
+    await sendMaxMessageWithAttachments(
+      target,
+      [
+        "⏰ **Ежедневный гороскоп — Premium-функция**",
+        "",
+        "Профиль и гороскоп на сегодня доступны бесплатно.",
+        `Автоматическая отправка каждый день в **${profile.publish_time_msk} МСК** включается после покупки Premium.`
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: { buttons }
+        }
+      ]
+    );
+    return;
+  }
+
+  const updatedProfile = await setHoroscopeDailyEnabled(userId, true);
+
+  await sendMaxMessageWithAttachments(
+    target,
+    [
+      "✅ **Ежедневный гороскоп включён**",
+      "",
+      `Теперь прогноз будет приходить каждый день примерно в **${updatedProfile.publish_time_msk} МСК**, пока активен Premium.`
+    ].join("\n"),
+    [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildHoroscopeMenuButtons(updatedProfile, true)
+        }
+      }
+    ]
+  );
+}
+
+async function disableHoroscopeDaily(target, userId) {
+  const profile = await setHoroscopeDailyEnabled(userId, false);
+
+  await sendMaxMessageWithAttachments(
+    target,
+    "🔕 Ежедневная отправка гороскопа отключена.",
+    [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildHoroscopeMenuButtons(profile, await isPremiumUser(userId))
+        }
+      }
+    ]
+  );
+}
+
+async function processHoroscopeDailyPublications() {
+  if (!dbPool || horoscopeDailyPublisherRunning) return;
+
+  horoscopeDailyPublisherRunning = true;
+
+  try {
+    const now = new Date();
+    const currentTimeMsk = getMoscowTimeHHMM(now);
+    const todayMsk = getMoscowDateYmd(now);
+
+    const result = await dbPool.query(
+      `
+        SELECT h.user_id, h.bot_key, h.name, h.birth_date, h.zodiac_sign,
+               h.publish_time_msk, h.daily_enabled, h.last_sent_date
+        FROM max_bot_horoscope_profiles h
+        INNER JOIN max_bot_premium_users p
+          ON p.user_id = h.user_id
+         AND p.bot_key = h.bot_key
+         AND p.premium_until > NOW()
+        WHERE h.bot_key = $1
+          AND h.daily_enabled = TRUE
+          AND h.publish_time_msk = $2
+          AND (h.last_sent_date IS NULL OR h.last_sent_date < $3::date)
+        LIMIT 100
+      `,
+      [BOT_KEY, currentTimeMsk, todayMsk]
+    );
+
+    for (const row of result.rows) {
+      const profile = normalizeHoroscopeProfile(row);
+
+      if (!isHoroscopeProfileComplete(profile)) continue;
+
+      try {
+        const horoscopeText = await buildHoroscopeText(profile);
+
+        await sendMaxMessage(
+          {
+            type: "user_id",
+            id: profile.user_id
+          },
+          horoscopeText
+        );
+
+        await dbPool.query(
+          `
+            UPDATE max_bot_horoscope_profiles
+            SET last_sent_date = $3::date,
+                updated_at = NOW()
+            WHERE user_id = $1 AND bot_key = $2
+          `,
+          [profile.user_id, BOT_KEY, todayMsk]
+        );
+      } catch (error) {
+        console.warn(
+          `Daily horoscope failed for user ${profile.user_id}:`,
+          error?.message || error
+        );
+      }
+    }
+  } catch (error) {
+    console.warn("Daily horoscope publisher failed:", error?.message || error);
+  } finally {
+    horoscopeDailyPublisherRunning = false;
+  }
+}
+
+function startHoroscopeDailyPublisher() {
+  if (horoscopeDailyPublisherStarted || !dbPool) return;
+
+  horoscopeDailyPublisherStarted = true;
+
+  setInterval(
+    () => {
+      processHoroscopeDailyPublications().catch((error) => {
+        console.warn("Daily horoscope interval failed:", error?.message || error);
+      });
+    },
+    HOROSCOPE_DAILY_POLL_MS
+  ).unref?.();
+
+  setInterval(
+    () => {
+      cleanupNonPremiumHoroscopeProfilesFromDb().catch((error) => {
+        console.warn("Horoscope DB cleanup failed:", error?.message || error);
+      });
+    },
+    HOROSCOPE_DB_CLEANUP_MS
+  ).unref?.();
+
+  setTimeout(() => {
+    processHoroscopeDailyPublications().catch((error) => {
+      console.warn("Daily horoscope warmup failed:", error?.message || error);
+    });
+  }, 5000).unref?.();
+
+  console.log("Daily horoscope publisher started");
 }
 
 const FLOOD_WINDOW_MS = Number(process.env.FLOOD_WINDOW_MS || 10_000);
@@ -3903,6 +5180,13 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
+        text: "🌙 Премиум Гороскоп",
+        payload: MENU_HOROSCOPE_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
         text: "💵 Купить Премиум",
         payload: MENU_PREMIUM_PAYLOAD
       }
@@ -4634,8 +5918,9 @@ async function sendPremiumInfo(target, userId) {
     `**1️⃣ ${PREMIUM_IMAGE_REQUEST_LIMIT} фото в день с лучшей моделью.**\n` +
     `**2️⃣ ChatGPT ${PREMIUM_CHATGPT_REQUEST_LIMIT} запросов в день.**\n` +
     `**3️⃣ Оживить фото / видео по фото: ${PREMIUM_VIDEO_REQUEST_LIMIT} раз в день.**\n` +
-    "**4️⃣ Уйдет обязательная подписка на каналы.**\n" +
-    "**5️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
+    "**4️⃣ Ежедневный персональный гороскоп по выбранному времени.**\n" +
+    "**5️⃣ Уйдет обязательная подписка на каналы.**\n" +
+    "**6️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
     `•🎥создать видео: **+${PREMIUM_BONUS_PROMPT_VIDEO_CREDITS}**;\n` +
     `•🛍️создать карточку товара: **+${PREMIUM_BONUS_PRODUCT_CARD_CREDITS}**;\n` +
     `•🎶создать музыку: **+${PREMIUM_BONUS_MUSIC_CREDITS}**.\n\n` +
@@ -7371,6 +8656,56 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         return;
       }
 
+      if (callbackPayload === MENU_HOROSCOPE_PAYLOAD) {
+        clearUserImageMode(userId);
+        clearFamilyVideoDraft(userId);
+
+        await sendHoroscopeMenu(target, userId);
+        return;
+      }
+
+      if (callbackPayload === HOROSCOPE_PROFILE_PAYLOAD) {
+        clearUserImageMode(userId);
+
+        await sendHoroscopeProfile(target, userId);
+        return;
+      }
+
+      if (callbackPayload === HOROSCOPE_START_PAYLOAD) {
+        clearUserImageMode(userId);
+
+        await startHoroscopeSetup(target, userId);
+        return;
+      }
+
+      if (callbackPayload === HOROSCOPE_TODAY_PAYLOAD) {
+        clearUserImageMode(userId);
+
+        await sendHoroscopeToday(target, userId);
+        return;
+      }
+
+      if (callbackPayload === HOROSCOPE_DAILY_ENABLE_PAYLOAD) {
+        clearUserImageMode(userId);
+
+        await enableHoroscopeDaily(target, userId);
+        return;
+      }
+
+      if (callbackPayload === HOROSCOPE_DAILY_DISABLE_PAYLOAD) {
+        clearUserImageMode(userId);
+
+        await disableHoroscopeDaily(target, userId);
+        return;
+      }
+
+      if (String(callbackPayload || "").startsWith(HOROSCOPE_TIME_PAYLOAD_PREFIX)) {
+        clearUserImageMode(userId);
+
+        await handleHoroscopeTimeButton(target, userId, callbackPayload);
+        return;
+      }
+
       // 5) Меню: Отключить лимиты / Premium
       if (callbackPayload === MENU_PREMIUM_PAYLOAD) {
         clearUserImageMode(userId);
@@ -7390,6 +8725,7 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
 if (callbackPayload === MENU_BACK_PAYLOAD) {
   clearUserImageMode(userId);
   clearFamilyVideoDraft(userId);
+  clearHoroscopeSetupState(userId);
 
   await sendMainMenu(target);
   return;
@@ -7440,6 +8776,7 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
     if (["/reset", "/new", "/clear", "/сброс"].includes(userText.toLowerCase())) {
       clearChatContext(userId);
       clearUserImageMode(userId);
+      clearHoroscopeSetupState(userId);
 
       await sendMaxMessage(
         target,
@@ -7454,6 +8791,15 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
         target,
         "**Это уже не смешно🥺. Стоп спам, пожалуйста😢**."
       );
+      return;
+    }
+
+    if (/^\s*(?:\/horoscope|\/гороскоп|гороскоп)\s*$/iu.test(userText)) {
+      await sendHoroscopeMenu(target, userId);
+      return;
+    }
+
+    if (await handleHoroscopeTextInput(target, userId, userText)) {
       return;
     }
 
@@ -8207,6 +9553,10 @@ async function handleYooKassaWebhook(req, res) {
         console.log("Premium payment apply result:", result);
 
         if (result.granted && result.userId) {
+          await persistTemporaryHoroscopeProfileForPremiumUser(result.userId).catch((error) => {
+            console.warn("Failed to persist temporary horoscope profile after Premium payment:", error?.message || error);
+          });
+
           await sendMaxMessage(
             {
               type: "user_id",
@@ -8219,6 +9569,7 @@ async function handleYooKassaWebhook(req, res) {
               `• ${PREMIUM_IMAGE_REQUEST_LIMIT} фото в день с лучшей моделью;`,
               `• ${PREMIUM_CHATGPT_REQUEST_LIMIT} запросов ChatGPT в день;`,
               `• оживить фото / видео по фото: ${PREMIUM_VIDEO_REQUEST_LIMIT} раз в день;`,
+              "• ежедневный гороскоп по выбранному времени;",
               "• без обязательной подписки на каналы;",
               "",
               "🎁 **Бонусные кредиты начислены:**",
@@ -8446,17 +9797,18 @@ app.post("/webhook", (req, res) => {
 
 resetDailyLimits();
 
-Promise.all([
-  initBroadcastUsersDb(),
-  initLimitsDb(),
-  initPremiumDb()
-])
-  .catch((error) => {
+(async () => {
+  try {
+    await initBroadcastUsersDb();
+    await initLimitsDb();
+    await initPremiumDb();
+    await initHoroscopeDb();
+  } catch (error) {
     console.warn("DB init failed:", error?.message || error);
-  })
-  .finally(() => {
+  } finally {
     app.listen(PORT, "0.0.0.0", () => {
       console.log(`MAX OpenAI bot is running on port ${PORT}`);
+      startHoroscopeDailyPublisher();
 
       setTimeout(() => {
         if (VIDEO_EXAMPLE_URL && !cachedVideoExampleToken) {
@@ -8472,4 +9824,5 @@ Promise.all([
         }
       }, 2000).unref?.();
     });
-  });
+  }
+})();
