@@ -455,6 +455,19 @@ function isProductCardMode(userId) {
 const HOROSCOPE_DEFAULT_PUBLISH_TIME_MSK = String(
   process.env.HOROSCOPE_DEFAULT_PUBLISH_TIME_MSK || "08:00"
 ).trim();
+
+const HOROSCOPE_FREE_BUTTON_LIMIT_PER_DAY = Number(
+  process.env.HOROSCOPE_FREE_BUTTON_LIMIT_PER_DAY || 1
+);
+
+const HOROSCOPE_PREMIUM_BUTTON_LIMIT_PER_DAY = Number(
+  process.env.HOROSCOPE_PREMIUM_BUTTON_LIMIT_PER_DAY || 2
+);
+
+// Fallback, если БД недоступна
+const horoscopeButtonUsageMemory = new Map();
+
+const HOROSCOPE_BUTTON_USAGE_KEY = "horoscope_forecast";
 const HOROSCOPE_DAILY_POLL_MS = Number(
   process.env.HOROSCOPE_DAILY_POLL_MS || 60_000
 );
@@ -1472,6 +1485,76 @@ function buildFallbackHoroscopeText(profile, sourceData, dateLabel) {
   ].filter(Boolean).join("\n");
 }
 
+function getHoroscopeButtonLimitForUser(premium) {
+  return premium
+    ? HOROSCOPE_PREMIUM_BUTTON_LIMIT_PER_DAY
+    : HOROSCOPE_FREE_BUTTON_LIMIT_PER_DAY;
+}
+
+function getHoroscopeButtonUsageMemoryKey(userId) {
+  const usageDate = getMoscowDateYmd();
+
+  return [
+    getUserRequestKey(userId),
+    BOT_KEY,
+    usageDate
+  ].join(":");
+}
+
+function consumeHoroscopeButtonUsageMemory(userId, premium) {
+  const limit = getHoroscopeButtonLimitForUser(premium);
+  const key = getHoroscopeButtonUsageMemoryKey(userId);
+  const current = Number(horoscopeButtonUsageMemory.get(key) || 0);
+
+  if (current >= limit) {
+    return {
+      allowed: false,
+      used: current,
+      limit
+    };
+  }
+
+  const next = current + 1;
+  horoscopeButtonUsageMemory.set(key, next);
+
+  return {
+    allowed: true,
+    used: next,
+    limit
+  };
+}
+
+async function sendHoroscopeLimitReached(target, userId, profile, premium) {
+  const limit = getHoroscopeButtonLimitForUser(premium);
+
+  const text = premium
+    ? [
+        "🔮 **Прогноз уже выдан**",
+        "",
+        `Сегодня вы уже использовали лимит гороскопов: **${limit}/${limit}**.`,
+        "Чтобы не создавать лишние повторные генерации, новый прогноз сегодня больше не запускаю.",
+        "",
+        "Загляните завтра — лимит обновится."
+      ].join("\n")
+    : [
+        "🔮 **Я уже дал вам прогноз на сегодня**",
+        "",
+        "Для бесплатного доступа гороскоп можно получить **1 раз в день**.",
+        "Повторно запускать генерацию сегодня не буду, чтобы не было флуда.",
+        "",
+        "С Premium доступно **2 прогноза в день**."
+      ].join("\n");
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildHoroscopeMenuButtons(profile || { user_id: userId }, premium)
+      }
+    }
+  ]);
+}
+
 async function buildHoroscopeText(profile, dayOffset = 0) {
   const date = new Date(Date.now() + Number(dayOffset || 0) * 24 * 60 * 60 * 1000);
   const dateYmd = getMoscowDateYmd(date);
@@ -1514,13 +1597,20 @@ async function sendHoroscopeToday(target, userId) {
     return;
   }
 
+  const premium = await isPremiumUser(userId);
+  const usage = consumeHoroscopeButtonUsageMemory(userId, premium);
+
+  if (!usage.allowed) {
+    return sendHoroscopeLimitReached(target, userId, profile, premium);
+  }
+
   const horoscopeText = await buildHoroscopeText(profile, 0);
 
   return sendMaxMessageWithAttachments(target, horoscopeText, [
     {
       type: "inline_keyboard",
       payload: {
-        buttons: buildHoroscopeMenuButtons(profile, await isPremiumUser(userId))
+        buttons: buildHoroscopeMenuButtons(profile, premium)
       }
     }
   ]);
@@ -1594,6 +1684,12 @@ async function sendHoroscopeTomorrow(target, userId) {
       ]
     );
     return;
+  }
+
+  const usage = consumeHoroscopeButtonUsageMemory(userId, true);
+
+  if (!usage.allowed) {
+    return sendHoroscopeLimitReached(target, userId, profile, true);
   }
 
   const horoscopeText = await buildHoroscopeText(profile, 1);
