@@ -2,6 +2,7 @@ import express from "express";
 import pg from "pg";
 import crypto from "crypto";
 import { fal } from "@fal-ai/client";
+import { buildHoroscopeFromEngine } from "./horoscopeEngine.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -1476,20 +1477,14 @@ function buildFallbackHoroscopeText(profile, sourceData, dateLabel) {
 async function buildHoroscopeText(profile) {
   const dateYmd = getMoscowDateYmd();
   const dateLabel = formatYmdRu(dateYmd);
-  const sourceData = await fetchDailyHoroscope(profile.zodiac_sign);
-  const aiText = await rewriteHoroscopeToRussian(profile, sourceData, dateLabel);
 
-  if (aiText) {
-    return [
-      `🔮 **Гороскоп на ${dateLabel}**`,
-      "",
-      aiText,
-      "",
-      "Источник прогноза: Aztro daily horoscope API."
-    ].join("\n");
-  }
-
-  return buildFallbackHoroscopeText(profile, sourceData, dateLabel);
+  return buildHoroscopeFromEngine(profile, {
+    dateLabel,
+    openaiApiKey: OPENAI_API_KEY,
+    openaiApiBase: OPENAI_API_BASE,
+    openaiModel: OPENAI_MODEL,
+    timeoutMs: 15000
+  });
 }
 
 async function sendHoroscopeToday(target, userId) {
