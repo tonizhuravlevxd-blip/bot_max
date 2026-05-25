@@ -1607,7 +1607,7 @@ async function sendHoroscopeToday(target, userId) {
   let status = null;
 
   try {
-    status = await startDynamicStatus(target, "🌌Вселенная думает");
+    status = await startDynamicStatus(target, "🌠Вселенная думает");
 
     const horoscopeText = await buildHoroscopeText(profile, 0);
 
