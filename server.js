@@ -6163,7 +6163,8 @@ async function sendPremiumInfo(target, userId) {
     `**3️⃣ Оживить фото / видео по фото: ${PREMIUM_VIDEO_REQUEST_LIMIT} раз в день.**\n` +
     "**4️⃣ Ежедневный персональный гороскоп по выбранному времени.**\n" +
     "**5️⃣ Уйдет обязательная подписка на каналы.**\n" +
-    "**6️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
+    "**6️⃣ ГОРОСКОП🧿.**\n" +
+    "**7️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
     `•🎥создать видео: **+${PREMIUM_BONUS_PROMPT_VIDEO_CREDITS}**;\n` +
     `•🛍️создать карточку товара: **+${PREMIUM_BONUS_PRODUCT_CARD_CREDITS}**;\n` +
     `•🎶создать музыку: **+${PREMIUM_BONUS_MUSIC_CREDITS}**.\n\n` +
