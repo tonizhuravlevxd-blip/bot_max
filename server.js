@@ -171,6 +171,10 @@ const APP_PUBLIC_URL = String(
 
 const WORKER_MAKE_VIDEO_URL = process.env.WORKER_MAKE_VIDEO_URL || "";
 
+const ALICE_AI_FREE_URL =
+  process.env.ALICE_AI_FREE_URL ||
+  "https://redirect.appmetrica.yandex.com/serve/750435175153844646?clid=15053682&appmetrica_js_redirect=0";
+
 // После этих значений нужна подписка
 const IMAGE_REQUESTS_BEFORE_SUBSCRIPTION = Number(
   process.env.IMAGE_REQUESTS_BEFORE_SUBSCRIPTION || 1
@@ -6012,7 +6016,8 @@ async function sendCreateVideoHelp(target, userId) {
     "• человек сохранит лицо и внешность;\n" +
     "• слегка улыбнётся;\n" +
     "• будет смотреть в камеру;\n" +
-    "• мягко помашет рукой, если это возможно по фото.\n\n";
+    "• мягко помашет рукой, если это возможно по фото.\n\n" +
+`**🥎Или создай бесплатно с [Алисой AI](${ALICE_AI_FREE_URL})**\n\n`;
 
   if (videoAccess.premium) {
     text +=
