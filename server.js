@@ -218,6 +218,18 @@ const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
 const MENU_HOROSCOPE_PAYLOAD = "menu_horoscope";
 const HOROSCOPE_PROFILE_PAYLOAD = "horoscope_profile";
 const HOROSCOPE_START_PAYLOAD = "horoscope_start";
+const HOROSCOPE_YES_NO_PAYLOAD = "horoscope_yes_no";
+const IMAGE_MODE_HOROSCOPE_YES_NO = "horoscope_yes_no";
+
+// Сюда вставишь свои ссылки на картинки
+const HOROSCOPE_YES_NO_START_IMAGE_URL =
+  process.env.HOROSCOPE_YES_NO_START_IMAGE_URL || "https://v3b.fal.media/files/b/0a9bab2a/f4Rr83z7xmVK23xbHWM2Z_pBaBitRH.jpg";
+
+const HOROSCOPE_YES_IMAGE_URL =
+  process.env.HOROSCOPE_YES_IMAGE_URL || "https://v3b.fal.media/files/b/0a9bab38/1Isll4-t3K6nko9IV2JtI_dmtNLaKy.jpg";
+
+const HOROSCOPE_NO_IMAGE_URL =
+  process.env.HOROSCOPE_NO_IMAGE_URL || "https://v3b.fal.media/files/b/0a9bab40/xuiMhQk22zOFO8hMk54L7_VnDLF22m.jpg";
 const HOROSCOPE_TODAY_PAYLOAD = "horoscope_today";
 const HOROSCOPE_TOMORROW_PAYLOAD = "horoscope_tomorrow";
 const HOROSCOPE_DAILY_ENABLE_PAYLOAD = "horoscope_daily_enable";
@@ -450,6 +462,22 @@ function isRestorationMode(userId) {
 
 function isProductCardMode(userId) {
   return getUserImageMode(userId) === IMAGE_MODE_PRODUCT_CARD;
+}
+
+function isHoroscopeYesNoMode(userId) {
+  return getUserImageMode(userId) === IMAGE_MODE_HOROSCOPE_YES_NO;
+}
+
+function buildHoroscopeBackButtonKeyboard() {
+  return [
+    [
+      {
+        type: "callback",
+        text: "⬅️ Назад к гороскопу",
+        payload: MENU_HOROSCOPE_PAYLOAD
+      }
+    ]
+  ];
 }
 
 const HOROSCOPE_DEFAULT_PUBLISH_TIME_MSK = String(
@@ -1007,6 +1035,14 @@ function buildHoroscopeMenuButtons(profile, premium) {
     ]
   ];
 
+  buttons.push([
+  {
+    type: "callback",
+    text: "📿 ДА/НЕТ",
+    payload: HOROSCOPE_YES_NO_PAYLOAD
+  }
+]);
+
   if (complete) {
     buttons.push([
       {
@@ -1107,6 +1143,120 @@ async function sendHoroscopeMenu(target, userId) {
       }
     }
   ]);
+}
+
+async function sendHoroscopeYesNoStart(target, userId) {
+  clearHoroscopeSetupState(userId);
+  clearFamilyVideoDraft(userId);
+
+  setUserImageMode(userId, IMAGE_MODE_HOROSCOPE_YES_NO);
+
+  const text = [
+    "📿 **ДА / НЕТ**",
+    "",
+    "Быстрый ответ на твой вопрос.",
+    "Хорошо подумай и задай вопрос.",
+    "",
+    "Важно: в конце вопроса должен быть знак **?**",
+    "",
+    "Пример:",
+    "`Стоит ли мне сегодня начинать новое дело?`"
+  ].join("\n");
+
+  return sendMaxImageUrlWithAttachments(
+    target,
+    text,
+    HOROSCOPE_YES_NO_START_IMAGE_URL,
+    [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildHoroscopeBackButtonKeyboard()
+        }
+      }
+    ]
+  );
+}
+
+async function handleHoroscopeYesNoQuestion(target, userId, userText) {
+  if (!isHoroscopeYesNoMode(userId)) {
+    return false;
+  }
+
+  const text = String(userText || "").trim();
+
+  if (!text) {
+    await sendMaxMessageWithAttachments(
+      target,
+      [
+        "⚖️ **ДА / НЕТ**",
+        "",
+        "Напишите вопрос текстом.",
+        "В конце вопроса должен быть знак **?**"
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: buildHoroscopeBackButtonKeyboard()
+          }
+        }
+      ]
+    );
+
+    return true;
+  }
+
+  if (!text.includes("?")) {
+    await sendMaxMessageWithAttachments(
+      target,
+      [
+        "⚖️ **Я жду вопрос**",
+        "",
+        "Хорошо подумай и задай вопрос со знаком **?**.",
+        "",
+        "Например:",
+        "`Получится ли у меня задуманное?`"
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: buildHoroscopeBackButtonKeyboard()
+          }
+        }
+      ]
+    );
+
+    return true;
+  }
+
+  const isYes = Math.random() < 0.5;
+  const answer = isYes ? "ДА" : "НЕТ";
+  const answerImageUrl = isYes ? HOROSCOPE_YES_IMAGE_URL : HOROSCOPE_NO_IMAGE_URL;
+
+  const answerText = [
+    `📿 **${answer}**`,
+    "",
+    "Ответ получен,но точнее скажет личный **гороскоп**",
+    "**Можешь попробовать еще или вернуться в гороскоп.**"
+  ].join("\n");
+
+  await sendMaxImageUrlWithAttachments(
+    target,
+    answerText,
+    answerImageUrl,
+    [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildHoroscopeBackButtonKeyboard()
+        }
+      }
+    ]
+  );
+
+  return true;
 }
 
 async function sendHoroscopeProfile(target, userId) {
@@ -7367,6 +7517,56 @@ async function sendMaxImage(target, text, imageBuffer) {
   throw lastError;
 }
 
+async function sendMaxImageUrlWithAttachments(
+  target,
+  text,
+  imageUrl,
+  extraAttachments = []
+) {
+  const cleanImageUrl = String(imageUrl || "").trim();
+
+  if (!cleanImageUrl || cleanImageUrl.startsWith("ССЫЛКА_")) {
+    return sendMaxMessageWithAttachments(target, text, extraAttachments);
+  }
+
+  const inputImage = await fetchImageBuffer(cleanImageUrl, false);
+
+  const imagePayload = await uploadImageBufferToMax(
+    inputImage.buffer,
+    inputImage.mime,
+    inputImage.filename
+  );
+
+  const attachments = [
+    {
+      type: "image",
+      payload: imagePayload
+    },
+    ...extraAttachments
+  ];
+
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_ATTACHMENT_RETRIES; attempt += 1) {
+    try {
+      await sendMaxMessageWithAttachments(target, text || null, attachments);
+      return;
+    } catch (error) {
+      lastError = error;
+
+      const message = String(error?.message || "");
+
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) {
+        throw error;
+      }
+
+      await sleep(700 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+}
+
 async function sendMaxBroadcastImagePost(target, text, imagePayload) {
   const attachments = [
     {
@@ -9000,6 +9200,15 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         return;
       }
 
+  if (callbackPayload === HOROSCOPE_YES_NO_PAYLOAD) {
+  clearUserImageMode(userId);
+  clearFamilyVideoDraft(userId);
+  clearHoroscopeSetupState(userId);
+
+  await sendHoroscopeYesNoStart(target, userId);
+  return;
+}
+
       if (callbackPayload === HOROSCOPE_PROFILE_PAYLOAD) {
         clearUserImageMode(userId);
 
@@ -9145,6 +9354,10 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
     if (await handleHoroscopeTextInput(target, userId, userText)) {
       return;
     }
+
+    if (await handleHoroscopeYesNoQuestion(target, userId, userText)) {
+  return;
+}
 
     if (isRestorationMode(userId)) {
       if (!incomingImageUrl) {
