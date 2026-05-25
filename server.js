@@ -1038,7 +1038,7 @@ function buildHoroscopeMenuButtons(profile, premium) {
   buttons.push([
   {
     type: "callback",
-    text: "📿 ДА/НЕТ",
+    text: "🎱 ДА/НЕТ",
     payload: HOROSCOPE_YES_NO_PAYLOAD
   }
 ]);
@@ -1152,7 +1152,7 @@ async function sendHoroscopeYesNoStart(target, userId) {
   setUserImageMode(userId, IMAGE_MODE_HOROSCOPE_YES_NO);
 
   const text = [
-    "📿 **ДА / НЕТ**",
+    "🎱 **ДА / НЕТ**",
     "",
     "Быстрый ответ на твой вопрос.",
     "Хорошо подумай и задай вопрос.",
@@ -2807,6 +2807,8 @@ const RANDOM_NUDGE_MESSAGES = [
 
   "🎁 Спасибо, что пользуешься ботом. Вот **[СТИКЕРЫ](https://max.ru/stickerset/H-ZRhj8Ho-gSEXFkiTwVJqOpforgF83w7wyGrDq47VI)**",
 
+  "🎮 **Оживляй фото с Алисой AI** 🎭 **Умная Алиса ждет свой запрос **[БЕСПЛАТНО](https://redirect.appmetrica.yandex.com/serve/750435175153844646?clid=15053682&appmetrica_js_redirect=0)**",
+
   "🚀 **Хочешь больше продаж на Wildberries и Ozon?** 📈 **MarketAI24** покажет, где ты теряешь *деньги* и как увеличить прибыль с помощью AI-аналитики. 🔥 Попробуй **[БЕСПЛАТНО](https://marketai24.ru/?ref=5ZFAWMVO)**",
 
   "🧠 Маленький совет: иногда лучший промт получается, если описать не только объект, но и стиль, свет, фон и настроение.",
@@ -2814,6 +2816,8 @@ const RANDOM_NUDGE_MESSAGES = [
   "✨ Хочешь результат лучше? Проси прямо в **ЧАТ** чтобы написали промт за тебя и **создавай фото**",
 
   "🤖 Спасибо, что создаёшь вместе с ботом. Ты теперь нам как **семья**👨‍👨‍👦‍👦",
+
+  "🤸‍♂️**Кстати вы знали что в Алисе от Яндекса можно оживлять фото и спросить что хочешь?**[БЕСПЛАТНО](https://redirect.appmetrica.yandex.com/serve/750435175153844646?clid=15053682&appmetrica_js_redirect=0)**",
 
   "🗣️ **Твои лимиты обновляются каждый день,всегда тебя ждем**",
 
