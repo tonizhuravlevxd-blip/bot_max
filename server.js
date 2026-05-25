@@ -1604,16 +1604,28 @@ async function sendHoroscopeToday(target, userId) {
     return sendHoroscopeLimitReached(target, userId, profile, premium);
   }
 
-  const horoscopeText = await buildHoroscopeText(profile, 0);
+  let status = null;
 
-  return sendMaxMessageWithAttachments(target, horoscopeText, [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons: buildHoroscopeMenuButtons(profile, premium)
+  try {
+    status = await startDynamicStatus(target, "🌌Вселенная думает");
+
+    const horoscopeText = await buildHoroscopeText(profile, 0);
+
+    return sendMaxMessageWithAttachments(target, horoscopeText, [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildHoroscopeMenuButtons(profile, premium)
+        }
       }
+    ]);
+  } finally {
+    if (status) {
+      await status.stop().catch((error) => {
+        console.warn("Horoscope today status stop failed:", error?.message || error);
+      });
     }
-  ]);
+  }
 }
 
 async function sendHoroscopeTomorrow(target, userId) {
@@ -1692,16 +1704,28 @@ async function sendHoroscopeTomorrow(target, userId) {
     return sendHoroscopeLimitReached(target, userId, profile, true);
   }
 
-  const horoscopeText = await buildHoroscopeText(profile, 1);
+  let status = null;
 
-  return sendMaxMessageWithAttachments(target, horoscopeText, [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons: buildHoroscopeMenuButtons(profile, true)
+  try {
+    status = await startDynamicStatus(target, "🌙Вселенная заглядывает в завтра");
+
+    const horoscopeText = await buildHoroscopeText(profile, 1);
+
+    return sendMaxMessageWithAttachments(target, horoscopeText, [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildHoroscopeMenuButtons(profile, true)
+        }
       }
+    ]);
+  } finally {
+    if (status) {
+      await status.stop().catch((error) => {
+        console.warn("Horoscope tomorrow status stop failed:", error?.message || error);
+      });
     }
-  ]);
+  }
 }
 
 async function enableHoroscopeDaily(target, userId) {
@@ -5352,7 +5376,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🌙 Премиум Гороскоп",
+        text: "🌙 Гороскоп",
         payload: MENU_HOROSCOPE_PAYLOAD
       }
     ],
