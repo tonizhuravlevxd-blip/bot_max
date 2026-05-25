@@ -2276,6 +2276,32 @@ function isBroadcastCommand(text) {
   return parseBroadcastCommand(text) !== null;
 }
 
+function isMaxChatDeniedError(error) {
+  const message = String(error?.message || "");
+
+  return (
+    message.includes("MAX API 403") &&
+    (
+      message.includes("chat.denied") ||
+      message.includes("error.dialog.suspended") ||
+      message.includes("dialog.suspended")
+    )
+  );
+}
+
+async function removeBroadcastUserFromDb(userId) {
+  if (!dbPool) return;
+
+  await dbPool.query(
+    `
+      DELETE FROM max_bot_broadcast_users
+      WHERE user_id = $1
+        AND bot_key = $2
+    `,
+    [String(userId), BOT_KEY]
+  );
+}
+
 async function handleBroadcastCommand(target, adminUserId, userText, incomingImageUrl = "") {
   const broadcastText = parseBroadcastCommand(userText);
   const hasImage = Boolean(incomingImageUrl);
@@ -2394,15 +2420,23 @@ async function handleBroadcastCommand(target, adminUserId, userText, incomingIma
       }
 
       sentCount += 1;
-    } catch (error) {
-      failedCount += 1;
+} catch (error) {
+  failedCount += 1;
 
+  console.warn(
+    `Broadcast failed for user ${recipientUserId}:`,
+    error?.message || error
+  );
+
+  if (isMaxChatDeniedError(error)) {
+    await removeBroadcastUserFromDb(recipientUserId).catch((cleanupError) => {
       console.warn(
-        `Broadcast failed for user ${recipientUserId}:`,
-        error?.message || error
+        `Failed to remove suspended broadcast user ${recipientUserId}:`,
+        cleanupError?.message || cleanupError
       );
-    }
-
+    });
+  }
+}
     if (BROADCAST_DELAY_MS > 0) {
       await sleep(BROADCAST_DELAY_MS);
     }
