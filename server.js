@@ -2276,8 +2276,9 @@ function isBroadcastCommand(text) {
   return parseBroadcastCommand(text) !== null;
 }
 
-async function handleBroadcastCommand(target, adminUserId, userText) {
+async function handleBroadcastCommand(target, adminUserId, userText, incomingImageUrl = "") {
   const broadcastText = parseBroadcastCommand(userText);
+  const hasImage = Boolean(incomingImageUrl);
 
   if (broadcastText === null) {
     return false;
@@ -2303,15 +2304,18 @@ async function handleBroadcastCommand(target, adminUserId, userText) {
     return true;
   }
 
-  if (!broadcastText) {
+  if (!broadcastText && !hasImage) {
     await sendMaxMessage(
       target,
       [
-        "✍️ Напишите текст рассылки после команды.",
+        "✍️ Напишите текст рассылки после команды или отправьте фото с подписью.",
         "",
         "Примеры:",
         "`/post Всем привет! Это сообщение от бота.`",
-        "`/рассылка Сегодня важное объявление.`"
+        "`/post **Жирный текст** и [ссылка](https://example.com)`",
+        "",
+        "Можно отправить **фото** и в подписи к фото написать:",
+        "`/post **Новый пост**\n\nОписание и [ссылка](https://example.com)`"
       ].join("\n")
     );
 
@@ -2329,23 +2333,65 @@ async function handleBroadcastCommand(target, adminUserId, userText) {
     return true;
   }
 
+  let imagePayload = null;
+
+  if (hasImage) {
+    try {
+      const inputImage = await downloadIncomingImage(incomingImageUrl);
+
+      imagePayload = await uploadImageBufferToMax(
+        inputImage.buffer,
+        inputImage.mime,
+        inputImage.filename || `broadcast.${extensionFromMime(inputImage.mime)}`
+      );
+    } catch (error) {
+      console.warn("Broadcast image upload failed:", error?.message || error);
+
+      await sendMaxMessage(
+        target,
+        "⚠️ Не получилось загрузить фото для рассылки. Проверьте изображение и попробуйте ещё раз."
+      );
+
+      return true;
+    }
+  }
+
   await sendMaxMessage(
     target,
-    `📣 Начинаю рассылку для ${recipients.length} пользователей...`
+    [
+      `📣 Начинаю рассылку для ${recipients.length} пользователей...`,
+      imagePayload ? "🖼️ Режим: текст + фото." : "📝 Режим: только текст.",
+      "Формат текста: MAX Markdown."
+    ].join("\n")
   );
 
   let sentCount = 0;
   let failedCount = 0;
 
+  const chunks = splitForMax(broadcastText || "");
+
   for (const recipientUserId of recipients) {
     try {
-      await sendMaxMessage(
-        {
-          type: "user_id",
-          id: recipientUserId
-        },
-        broadcastText
-      );
+      const recipientTarget = {
+        type: "user_id",
+        id: recipientUserId
+      };
+
+      if (imagePayload) {
+        // Первое сообщение: фото + первый кусок текста.
+        await sendMaxBroadcastImagePost(
+          recipientTarget,
+          chunks[0] || null,
+          imagePayload
+        );
+
+        // Если текст длинный, остальные куски отправляем отдельными сообщениями.
+        for (const extraChunk of chunks.slice(1)) {
+          await sendMaxMessage(recipientTarget, extraChunk);
+        }
+      } else {
+        await sendMaxMessage(recipientTarget, broadcastText);
+      }
 
       sentCount += 1;
     } catch (error) {
@@ -2370,6 +2416,7 @@ async function handleBroadcastCommand(target, adminUserId, userText) {
       `📨 Успешно отправлено: ${sentCount}`,
       `⚠️ Ошибок: ${failedCount}`,
       `👥 Получателей в выборке: ${recipients.length}`,
+      imagePayload ? "🖼️ Отправлено с фото." : "📝 Отправлено без фото.",
       "",
       BROADCAST_USE_ALL_BOTS
         ? "Режим: пользователи всех ботов из общей таблицы."
@@ -7175,7 +7222,15 @@ async function downloadIncomingImage(url) {
 
 
 
-async function uploadImageToMax(imageBuffer) {
+async function uploadImageBufferToMax(
+  imageBuffer,
+  mime = "image/png",
+  filename = "image.png"
+) {
+  if (!imageBuffer || !imageBuffer.length) {
+    throw new Error("Image buffer is empty");
+  }
+
   const uploadInfo = await maxRequest("/uploads", {
     method: "POST",
     query: { type: "image" }
@@ -7187,12 +7242,17 @@ async function uploadImageToMax(imageBuffer) {
     throw new Error(`MAX upload URL is missing: ${JSON.stringify(uploadInfo)}`);
   }
 
+  let token = uploadInfo?.token;
+
+  const cleanMime = String(mime || "image/png").split(";")[0].trim();
+  const cleanFilename = String(filename || `image.${extensionFromMime(cleanMime)}`);
+
   const form = new FormData();
 
   form.append(
     "data",
-    new Blob([imageBuffer], { type: `image/${OPENAI_IMAGE_OUTPUT_FORMAT}` }),
-    `openai-image.${OPENAI_IMAGE_OUTPUT_FORMAT}`
+    new Blob([imageBuffer], { type: cleanMime }),
+    cleanFilename
   );
 
   const response = await fetch(uploadUrl, {
@@ -7214,12 +7274,27 @@ async function uploadImageToMax(imageBuffer) {
     throw new Error(`MAX upload ${response.status}: ${details}`);
   }
 
+  if (!token) {
+    if (body?.token) token = body.token;
+    if (body?.retval && typeof body.retval === "string") token = body.retval;
+    if (body?.payload?.token) token = body.payload.token;
+  }
+
   if (body?.payload && typeof body.payload === "object") return body.payload;
   if (body?.retval && typeof body.retval === "object") return body.retval;
-  if (body?.token) return { token: body.token };
+  if (token) return { token };
+
   if (typeof body === "object" && body) return body;
 
   throw new Error(`MAX upload returned unexpected body: ${JSON.stringify(body)}`);
+}
+
+async function uploadImageToMax(imageBuffer) {
+  return uploadImageBufferToMax(
+    imageBuffer,
+    `image/${OPENAI_IMAGE_OUTPUT_FORMAT}`,
+    `openai-image.${OPENAI_IMAGE_OUTPUT_FORMAT}`
+  );
 }
 
 async function sendMaxImage(target, text, imageBuffer) {
@@ -7240,6 +7315,36 @@ async function sendMaxImage(target, text, imageBuffer) {
   for (let attempt = 0; attempt < MAX_ATTACHMENT_RETRIES; attempt += 1) {
     try {
       await sendMaxMessageWithAttachments(target, text, attachments);
+      return;
+    } catch (error) {
+      lastError = error;
+
+      const message = String(error?.message || "");
+
+      if (!/attachment\.not\.ready|not\.processed|not ready/i.test(message)) {
+        throw error;
+      }
+
+      await sleep(700 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
+}
+
+async function sendMaxBroadcastImagePost(target, text, imagePayload) {
+  const attachments = [
+    {
+      type: "image",
+      payload: imagePayload
+    }
+  ];
+
+  let lastError;
+
+  for (let attempt = 0; attempt < MAX_ATTACHMENT_RETRIES; attempt += 1) {
+    try {
+      await sendMaxMessageWithAttachments(target, text || null, attachments);
       return;
     } catch (error) {
       lastError = error;
@@ -8945,7 +9050,7 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
     if (isBroadcastCommand(userText)) {
       if (updateType !== "message_created") return;
 
-      await handleBroadcastCommand(target, userId, userText);
+      await handleBroadcastCommand(target, userId, userText, incomingImageUrl);
       return;
     }
     // Текстовая команда проверки подписки
