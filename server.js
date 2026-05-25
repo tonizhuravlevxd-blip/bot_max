@@ -188,8 +188,8 @@ const REQUIRED_CHANNELS = [
     title: "Наш Канал"
   },
   {
-    id: process.env.REQUIRED_CHANNEL_ID_2 || "-74096616285473",
-    url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/id503501079307_1_bot?startapp=TL78917b331549",
+    id: process.env.REQUIRED_CHANNEL_ID_2 || "-72952296540698",
+    url: process.env.REQUIRED_CHANNEL_URL_2 || "https://max.ru/yandex_browser",
     title: "Канал 2"
   },
   {
