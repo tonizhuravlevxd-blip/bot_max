@@ -2811,7 +2811,7 @@ const RANDOM_NUDGE_MESSAGES = [
 
   "🎁 Спасибо, что пользуешься ботом. Вот **[СТИКЕРЫ](https://max.ru/stickerset/H-ZRhj8Ho-gSEXFkiTwVJqOpforgF83w7wyGrDq47VI)**",
 
-  "🎮 **Оживляй фото с Алисой AI** 🎭 **Умная Алиса ждет свой запрос **[БЕСПЛАТНО](https://redirect.appmetrica.yandex.com/serve/750435175153844646?clid=15053682&appmetrica_js_redirect=0)**",
+  "🎮 **Оживляй фото с Алисой AI** 🎭 **Умная Алиса ждет свой запрос**[БЕСПЛАТНО](https://redirect.appmetrica.yandex.com/serve/750435175153844646?clid=15053682&appmetrica_js_redirect=0)**",
 
   "🚀 **Хочешь больше продаж на Wildberries и Ozon?** 📈 **MarketAI24** покажет, где ты теряешь *деньги* и как увеличить прибыль с помощью AI-аналитики. 🔥 Попробуй **[БЕСПЛАТНО](https://marketai24.ru/?ref=5ZFAWMVO)**",
 
