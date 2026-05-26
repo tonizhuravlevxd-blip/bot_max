@@ -6,6 +6,7 @@ import { buildHoroscopeFromEngine } from "./horoscopeEngine.js";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: false }));
 
 const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
@@ -26,8 +27,10 @@ const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
   process.env.VIDEO_REQUESTS_BEFORE_SUBSCRIPTION || 1
 );
 
+// Больше не используем один общий email для всех чеков.
+// Email для чека пользователь вводит на странице перед оплатой.
 const YOOKASSA_RECEIPT_EMAIL =
-  process.env.YOOKASSA_RECEIPT_EMAIL || "toni.zhuravlev.xd@mail.ru";
+  String(process.env.YOOKASSA_RECEIPT_EMAIL || "").trim();
 
 const YOOKASSA_VAT_CODE = Number(process.env.YOOKASSA_VAT_CODE || 1);
 const YOOKASSA_TAX_SYSTEM_CODE = process.env.YOOKASSA_TAX_SYSTEM_CODE
@@ -3914,118 +3917,54 @@ async function yookassaRequest(path, options = {}) {
   return body;
 }
 
-async function createYooKassaPremiumPayment(userId) {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for premium payments");
-  }
-
-  if (!APP_PUBLIC_URL) {
-    throw new Error("APP_PUBLIC_URL is not set");
-  }
-
-  const key = getUserRequestKey(userId);
-
-  const price = Number(PREMIUM_PRICE_RUB || 269);
-  const priceValue = price.toFixed(2);
-
-  const description = "Премиум на месяц";
-
-  const payment = await yookassaRequest("/payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: {
-        value: priceValue,
-        currency: "RUB"
-      },
-      confirmation: {
-        type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/premium/return?user_id=${encodeURIComponent(key)}`
-      },
-      capture: true,
-      description: `${description} для user ${key}`,
-      metadata: {
-        user_id: key,
-        bot_key: BOT_KEY,
-        product: "premium_month",
-        type: "premium"
-      },
-      receipt: {
-        customer: {
-          email: `user${key}@example.com`
-        },
-        items: [
-          {
-            description,
-            quantity: "1.00",
-            amount: {
-              value: priceValue,
-              currency: "RUB"
-            },
-            vat_code: 1,
-            payment_mode: "full_payment",
-            payment_subject: "service"
-          }
-        ]
-      }
-    }
-  });
-
-  if (!payment?.id) {
-    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
-  }
-
-  await dbPool.query(
-    `
-      INSERT INTO max_bot_premium_payments (
-        payment_id,
-        user_id,
-        bot_key,
-        status,
-        amount,
-        currency,
-        raw
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      ON CONFLICT (payment_id)
-      DO UPDATE SET
-        status = EXCLUDED.status,
-        raw = EXCLUDED.raw,
-        updated_at = NOW()
-    `,
-    [
-      String(payment.id),
-      key,
-      BOT_KEY,
-      String(payment.status || "pending"),
-      String(payment.amount?.value || priceValue),
-      String(payment.amount?.currency || "RUB"),
-      JSON.stringify(payment)
-    ]
-  );
-
-  return payment;
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 }
 
-async function createYooKassaProductCardPayment(userId) {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for product card payments");
+function normalizeReceiptEmail(value) {
+  const email = String(value || "")
+    .trim()
+    .toLowerCase();
+
+  if (!email || email.length > 254) {
+    return "";
   }
 
-  if (!APP_PUBLIC_URL) {
-    throw new Error("APP_PUBLIC_URL is not set");
+  // Достаточно строгая проверка для обычных email.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    return "";
   }
 
-  const key = getUserRequestKey(userId);
+  return email;
+}
 
-  const price = Number(PRODUCT_CARD_PRICE_RUB || 79);
-  const priceValue = price.toFixed(2);
+function getPaymentUserIdFromRequest(req) {
+  return String(req.body?.user_id || req.query?.user_id || "").trim();
+}
 
-  const description = "Создание карточки товара";
+function getPaymentModeFromRequest(req) {
+  return String(req.body?.mode || req.query?.mode || "").trim();
+}
+
+function getPaymentReceiptEmailFromRequest(req) {
+  return normalizeReceiptEmail(req.body?.receipt_email || req.query?.receipt_email || "");
+}
+
+function buildYooKassaReceipt(description, priceValue, receiptEmail) {
+  const email = normalizeReceiptEmail(receiptEmail);
+
+  if (!email) {
+    throw new Error("Valid receipt email is required");
+  }
 
   const receipt = {
     customer: {
-      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
+      email
     },
     items: [
       {
@@ -4046,6 +3985,268 @@ async function createYooKassaProductCardPayment(userId) {
     receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
   }
 
+  return receipt;
+}
+
+function renderReceiptEmailForm(res, {
+  title,
+  priceRub,
+  userId,
+  mode = "",
+  errorText = ""
+}) {
+  const safeTitle = escapeHtml(title || "Оплата");
+  const safePrice = Number(priceRub || 0).toFixed(0);
+  const safeUserId = escapeHtml(userId);
+  const safeMode = escapeHtml(mode);
+  const safeError = escapeHtml(errorText);
+
+  res
+    .status(errorText ? 400 : 200)
+    .type("text/html; charset=utf-8")
+    .send(`
+      <!doctype html>
+      <html lang="ru">
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <title>${safeTitle}</title>
+          <style>
+            * {
+              box-sizing: border-box;
+            }
+
+            body {
+              margin: 0;
+              min-height: 100vh;
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              padding: 24px;
+              font-family: Arial, sans-serif;
+              background: #f4f5f7;
+              color: #111827;
+            }
+
+            .card {
+              width: 100%;
+              max-width: 430px;
+              background: #ffffff;
+              border-radius: 18px;
+              padding: 26px;
+              box-shadow: 0 18px 45px rgba(15, 23, 42, 0.12);
+            }
+
+            h1 {
+              margin: 0 0 10px;
+              font-size: 24px;
+              line-height: 1.2;
+            }
+
+            .price {
+              margin: 0 0 18px;
+              font-size: 18px;
+              font-weight: 700;
+            }
+
+            .hint {
+              margin: 0 0 18px;
+              color: #4b5563;
+              line-height: 1.45;
+              font-size: 14px;
+            }
+
+            .error {
+              margin: 0 0 14px;
+              padding: 10px 12px;
+              border-radius: 10px;
+              background: #fee2e2;
+              color: #991b1b;
+              font-size: 14px;
+            }
+
+            label {
+              display: block;
+              margin-bottom: 8px;
+              font-weight: 700;
+              font-size: 14px;
+            }
+
+            input[type="email"] {
+              width: 100%;
+              padding: 14px 15px;
+              border: 1px solid #d1d5db;
+              border-radius: 12px;
+              font-size: 16px;
+              outline: none;
+            }
+
+            input[type="email"]:focus {
+              border-color: #2563eb;
+              box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.15);
+            }
+
+            button {
+              width: 100%;
+              margin-top: 18px;
+              padding: 14px 16px;
+              border: 0;
+              border-radius: 12px;
+              background: #2563eb;
+              color: #ffffff;
+              font-size: 16px;
+              font-weight: 700;
+              cursor: pointer;
+            }
+
+            button:hover {
+              background: #1d4ed8;
+            }
+
+            .small {
+              margin-top: 14px;
+              font-size: 12px;
+              color: #6b7280;
+              line-height: 1.4;
+            }
+          </style>
+        </head>
+        <body>
+          <main class="card">
+            <h1>${safeTitle}</h1>
+            <p class="price">Стоимость: ${safePrice} ₽</p>
+            <p class="hint">
+              Введите email, на который должен прийти чек. После этого откроется страница оплаты YooKassa.
+            </p>
+
+            ${safeError ? `<div class="error">${safeError}</div>` : ""}
+
+            <form method="post">
+              <input type="hidden" name="user_id" value="${safeUserId}">
+              ${safeMode ? `<input type="hidden" name="mode" value="${safeMode}">` : ""}
+
+              <label for="receipt_email">Email для чека</label>
+              <input
+                id="receipt_email"
+                name="receipt_email"
+                type="email"
+                placeholder="example@mail.ru"
+                autocomplete="email"
+                required
+              >
+
+              <button type="submit">Перейти к оплате</button>
+            </form>
+
+            <p class="small">
+              Чек будет сформирован на указанный email при успешной оплате.
+            </p>
+          </main>
+        </body>
+      </html>
+    `);
+}
+
+function buildYooKassaBuyRouteHandler({
+  title,
+  priceRub,
+  createPayment,
+  failMessage
+}) {
+  return async function handleBuyRoute(req, res) {
+    try {
+      const userId = getPaymentUserIdFromRequest(req);
+      const mode = getPaymentModeFromRequest(req);
+
+      if (!isValidUserIdForBroadcast(userId)) {
+        res.status(400).type("text/plain").send("Некорректный user_id.");
+        return;
+      }
+
+      if (req.method !== "POST") {
+        renderReceiptEmailForm(res, {
+          title,
+          priceRub,
+          userId,
+          mode
+        });
+        return;
+      }
+
+      const receiptEmail = getPaymentReceiptEmailFromRequest(req);
+
+      if (!receiptEmail) {
+        renderReceiptEmailForm(res, {
+          title,
+          priceRub,
+          userId,
+          mode,
+          errorText: "Введите корректный email для получения чека."
+        });
+        return;
+      }
+
+      const payment = await createPayment(userId, receiptEmail, mode);
+      const confirmationUrl = payment?.confirmation?.confirmation_url;
+
+      if (!confirmationUrl) {
+        throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
+      }
+
+      res.redirect(302, confirmationUrl);
+    } catch (error) {
+      console.error(`${title} payment create failed:`, error);
+      res
+        .status(500)
+        .type("text/plain")
+        .send(failMessage || "Не удалось создать платеж. Вернитесь в бота и попробуйте позже.");
+    }
+  };
+}
+
+async function createYooKassaServicePayment({
+  userId,
+  receiptEmail,
+  priceRub,
+  description,
+  product,
+  type,
+  returnPath,
+  returnParams = {},
+  extraMetadata = {}
+}) {
+  if (!dbPool) {
+    throw new Error("DATABASE_URL is required for payments");
+  }
+
+  if (!APP_PUBLIC_URL) {
+    throw new Error("APP_PUBLIC_URL is not set");
+  }
+
+  const key = getUserRequestKey(userId);
+  const email = normalizeReceiptEmail(receiptEmail);
+
+  if (!email) {
+    throw new Error("Valid receipt email is required");
+  }
+
+  const price = Number(priceRub || 0);
+
+  if (!Number.isFinite(price) || price <= 0) {
+    throw new Error(`Invalid YooKassa price for ${product}: ${priceRub}`);
+  }
+
+  const priceValue = price.toFixed(2);
+
+  const returnUrl = new URL(`${APP_PUBLIC_URL}${returnPath}`);
+  returnUrl.searchParams.set("user_id", key);
+
+  for (const [paramKey, paramValue] of Object.entries(returnParams || {})) {
+    if (paramValue !== undefined && paramValue !== null && String(paramValue).trim()) {
+      returnUrl.searchParams.set(paramKey, String(paramValue));
+    }
+  }
+
   const payment = await yookassaRequest("/payments", {
     method: "POST",
     idempotenceKey: crypto.randomUUID(),
@@ -4056,17 +4257,19 @@ async function createYooKassaProductCardPayment(userId) {
       },
       confirmation: {
         type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/product-card/return?user_id=${encodeURIComponent(key)}`
+        return_url: returnUrl.toString()
       },
       capture: true,
       description: `${description} для user ${key}`,
       metadata: {
         user_id: key,
         bot_key: BOT_KEY,
-        product: PRODUCT_CARD_PRODUCT_CODE,
-        type: PRODUCT_CARD_PRODUCT_CODE
+        product,
+        type,
+        receipt_email: email,
+        ...extraMetadata
       },
-      receipt
+      receipt: buildYooKassaReceipt(description, priceValue, email)
     }
   });
 
@@ -4108,408 +4311,82 @@ async function createYooKassaProductCardPayment(userId) {
   return payment;
 }
 
-async function createYooKassaMusicPayment(userId) {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for music payments");
-  }
-
-  if (!APP_PUBLIC_URL) {
-    throw new Error("APP_PUBLIC_URL is not set");
-  }
-
-  const key = getUserRequestKey(userId);
-
-  const price = Number(MUSIC_PRICE_RUB || 69);
-  const priceValue = price.toFixed(2);
-
-  const description = "Создание музыки AI";
-
-  const receipt = {
-    customer: {
-      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
-    },
-    items: [
-      {
-        description,
-        quantity: "1.00",
-        amount: {
-          value: priceValue,
-          currency: "RUB"
-        },
-        vat_code: YOOKASSA_VAT_CODE,
-        payment_mode: "full_payment",
-        payment_subject: "service"
-      }
-    ]
-  };
-
-  if (YOOKASSA_TAX_SYSTEM_CODE) {
-    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
-  }
-
-  const payment = await yookassaRequest("/payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: {
-        value: priceValue,
-        currency: "RUB"
-      },
-      confirmation: {
-        type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/music/return?user_id=${encodeURIComponent(key)}`
-      },
-      capture: true,
-      description: `${description} для user ${key}`,
-      metadata: {
-        user_id: key,
-        bot_key: BOT_KEY,
-        product: MUSIC_PRODUCT_CODE,
-        type: MUSIC_PRODUCT_CODE
-      },
-      receipt
-    }
+async function createYooKassaPremiumPayment(userId, receiptEmail) {
+  return createYooKassaServicePayment({
+    userId,
+    receiptEmail,
+    priceRub: PREMIUM_PRICE_RUB,
+    description: "Премиум на месяц",
+    product: "premium_month",
+    type: "premium",
+    returnPath: "/premium/return"
   });
-
-  if (!payment?.id) {
-    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
-  }
-
-  await dbPool.query(
-    `
-      INSERT INTO max_bot_premium_payments (
-        payment_id,
-        user_id,
-        bot_key,
-        status,
-        amount,
-        currency,
-        raw
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      ON CONFLICT (payment_id)
-      DO UPDATE SET
-        status = EXCLUDED.status,
-        amount = EXCLUDED.amount,
-        currency = EXCLUDED.currency,
-        raw = EXCLUDED.raw,
-        updated_at = NOW()
-    `,
-    [
-      String(payment.id),
-      key,
-      BOT_KEY,
-      String(payment.status || "pending"),
-      String(payment.amount?.value || priceValue),
-      String(payment.amount?.currency || "RUB"),
-      JSON.stringify(payment)
-    ]
-  );
-
-  return payment;
 }
 
-async function createYooKassaPromptVideoPayment(userId) {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for prompt video payments");
-  }
-
-  if (!APP_PUBLIC_URL) {
-    throw new Error("APP_PUBLIC_URL is not set");
-  }
-
-  const key = getUserRequestKey(userId);
-  const price = Number(PROMPT_VIDEO_PRICE_RUB || 69);
-  const priceValue = price.toFixed(2);
-  const description = "Создание видео AI";
-
-  const receipt = {
-    customer: {
-      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
-    },
-    items: [
-      {
-        description,
-        quantity: "1.00",
-        amount: {
-          value: priceValue,
-          currency: "RUB"
-        },
-        vat_code: YOOKASSA_VAT_CODE,
-        payment_mode: "full_payment",
-        payment_subject: "service"
-      }
-    ]
-  };
-
-  if (YOOKASSA_TAX_SYSTEM_CODE) {
-    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
-  }
-
-  const payment = await yookassaRequest("/payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: {
-        value: priceValue,
-        currency: "RUB"
-      },
-      confirmation: {
-        type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/prompt-video/return?user_id=${encodeURIComponent(key)}`
-      },
-      capture: true,
-      description: `${description} для user ${key}`,
-      metadata: {
-        user_id: key,
-        bot_key: BOT_KEY,
-        product: PROMPT_VIDEO_PRODUCT_CODE,
-        type: PROMPT_VIDEO_PRODUCT_CODE
-      },
-      receipt
-    }
+async function createYooKassaProductCardPayment(userId, receiptEmail) {
+  return createYooKassaServicePayment({
+    userId,
+    receiptEmail,
+    priceRub: PRODUCT_CARD_PRICE_RUB,
+    description: "Создание карточки товара",
+    product: PRODUCT_CARD_PRODUCT_CODE,
+    type: PRODUCT_CARD_PRODUCT_CODE,
+    returnPath: "/product-card/return"
   });
-
-  if (!payment?.id) {
-    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
-  }
-
-  await dbPool.query(
-    `
-      INSERT INTO max_bot_premium_payments (
-        payment_id,
-        user_id,
-        bot_key,
-        status,
-        amount,
-        currency,
-        raw
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      ON CONFLICT (payment_id)
-      DO UPDATE SET
-        status = EXCLUDED.status,
-        amount = EXCLUDED.amount,
-        currency = EXCLUDED.currency,
-        raw = EXCLUDED.raw,
-        updated_at = NOW()
-    `,
-    [
-      String(payment.id),
-      key,
-      BOT_KEY,
-      String(payment.status || "pending"),
-      String(payment.amount?.value || priceValue),
-      String(payment.amount?.currency || "RUB"),
-      JSON.stringify(payment)
-    ]
-  );
-
-  return payment;
 }
 
-async function createYooKassaVideoPayment(userId, mode = "") {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for video payments");
-  }
+async function createYooKassaMusicPayment(userId, receiptEmail) {
+  return createYooKassaServicePayment({
+    userId,
+    receiptEmail,
+    priceRub: MUSIC_PRICE_RUB,
+    description: "Создание музыки AI",
+    product: MUSIC_PRODUCT_CODE,
+    type: MUSIC_PRODUCT_CODE,
+    returnPath: "/music/return"
+  });
+}
 
-  if (!APP_PUBLIC_URL) {
-    throw new Error("APP_PUBLIC_URL is not set");
-  }
+async function createYooKassaPromptVideoPayment(userId, receiptEmail) {
+  return createYooKassaServicePayment({
+    userId,
+    receiptEmail,
+    priceRub: PROMPT_VIDEO_PRICE_RUB,
+    description: "Создание видео AI",
+    product: PROMPT_VIDEO_PRODUCT_CODE,
+    type: PROMPT_VIDEO_PRODUCT_CODE,
+    returnPath: "/prompt-video/return"
+  });
+}
 
-  const key = getUserRequestKey(userId);
+async function createYooKassaVideoPayment(userId, receiptEmail, mode = "") {
   const cleanMode = String(mode || "").trim();
 
-  const price = Number(VIDEO_PRICE_RUB || 59);
-  const priceValue = price.toFixed(2);
-
-  const description = "Оживление фото AI";
-
-  const receipt = {
-    customer: {
-      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
-    },
-    items: [
-      {
-        description,
-        quantity: "1.00",
-        amount: {
-          value: priceValue,
-          currency: "RUB"
-        },
-        vat_code: YOOKASSA_VAT_CODE,
-        payment_mode: "full_payment",
-        payment_subject: "service"
-      }
-    ]
-  };
-
-  if (YOOKASSA_TAX_SYSTEM_CODE) {
-    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
-  }
-
-  const payment = await yookassaRequest("/payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: {
-        value: priceValue,
-        currency: "RUB"
-      },
-      confirmation: {
-        type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/video/return?user_id=${encodeURIComponent(key)}${cleanMode ? `&mode=${encodeURIComponent(cleanMode)}` : ""}`
-      },
-      capture: true,
-      description: `${description} для user ${key}`,
-metadata: {
-  user_id: key,
-  bot_key: BOT_KEY,
-  product: VIDEO_PRODUCT_CODE,
-  type: VIDEO_PRODUCT_CODE,
-  mode: cleanMode
-},
-      receipt
+  return createYooKassaServicePayment({
+    userId,
+    receiptEmail,
+    priceRub: VIDEO_PRICE_RUB,
+    description: "Оживление фото AI",
+    product: VIDEO_PRODUCT_CODE,
+    type: VIDEO_PRODUCT_CODE,
+    returnPath: "/video/return",
+    returnParams: cleanMode ? { mode: cleanMode } : {},
+    extraMetadata: {
+      mode: cleanMode
     }
   });
-
-  if (!payment?.id) {
-    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
-  }
-
-  await dbPool.query(
-    `
-      INSERT INTO max_bot_premium_payments (
-        payment_id,
-        user_id,
-        bot_key,
-        status,
-        amount,
-        currency,
-        raw
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      ON CONFLICT (payment_id)
-      DO UPDATE SET
-        status = EXCLUDED.status,
-        amount = EXCLUDED.amount,
-        currency = EXCLUDED.currency,
-        raw = EXCLUDED.raw,
-        updated_at = NOW()
-    `,
-    [
-      String(payment.id),
-      key,
-      BOT_KEY,
-      String(payment.status || "pending"),
-      String(payment.amount?.value || priceValue),
-      String(payment.amount?.currency || "RUB"),
-      JSON.stringify(payment)
-    ]
-  );
-
-  return payment;
 }
 
-async function createYooKassaFamilyVideoPayment(userId) {
-  if (!dbPool) {
-    throw new Error("DATABASE_URL is required for family video payments");
-  }
-
-  if (!APP_PUBLIC_URL) {
-    throw new Error("APP_PUBLIC_URL is not set");
-  }
-
-  const key = getUserRequestKey(userId);
-
-  const price = Number(FAMILY_VIDEO_PRICE_RUB || 149);
-  const priceValue = price.toFixed(2);
-
-  const description = "ТРЕНД МЕСЯЦА";
-
-  const receipt = {
-    customer: {
-      email: YOOKASSA_RECEIPT_EMAIL || `user${key}@example.com`
-    },
-    items: [
-      {
-        description,
-        quantity: "1.00",
-        amount: {
-          value: priceValue,
-          currency: "RUB"
-        },
-        vat_code: YOOKASSA_VAT_CODE,
-        payment_mode: "full_payment",
-        payment_subject: "service"
-      }
-    ]
-  };
-
-  if (YOOKASSA_TAX_SYSTEM_CODE) {
-    receipt.tax_system_code = YOOKASSA_TAX_SYSTEM_CODE;
-  }
-
-  const payment = await yookassaRequest("/payments", {
-    method: "POST",
-    idempotenceKey: crypto.randomUUID(),
-    body: {
-      amount: {
-        value: priceValue,
-        currency: "RUB"
-      },
-      confirmation: {
-        type: "redirect",
-        return_url: `${APP_PUBLIC_URL}/family-video/return?user_id=${encodeURIComponent(key)}`
-      },
-      capture: true,
-      description: `${description} для user ${key}`,
-      metadata: {
-        user_id: key,
-        bot_key: BOT_KEY,
-        product: FAMILY_VIDEO_PRODUCT_CODE,
-        type: FAMILY_VIDEO_PRODUCT_CODE
-      },
-      receipt
-    }
+async function createYooKassaFamilyVideoPayment(userId, receiptEmail) {
+  return createYooKassaServicePayment({
+    userId,
+    receiptEmail,
+    priceRub: FAMILY_VIDEO_PRICE_RUB,
+    description: "ТРЕНД МЕСЯЦА",
+    product: FAMILY_VIDEO_PRODUCT_CODE,
+    type: FAMILY_VIDEO_PRODUCT_CODE,
+    returnPath: "/family-video/return"
   });
-
-  if (!payment?.id) {
-    throw new Error(`YooKassa payment id is missing: ${JSON.stringify(payment)}`);
-  }
-
-  await dbPool.query(
-    `
-      INSERT INTO max_bot_premium_payments (
-        payment_id,
-        user_id,
-        bot_key,
-        status,
-        amount,
-        currency,
-        raw
-      )
-      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-      ON CONFLICT (payment_id)
-      DO UPDATE SET
-        status = EXCLUDED.status,
-        amount = EXCLUDED.amount,
-        currency = EXCLUDED.currency,
-        raw = EXCLUDED.raw,
-        updated_at = NOW()
-    `,
-    [
-      String(payment.id),
-      key,
-      BOT_KEY,
-      String(payment.status || "pending"),
-      String(payment.amount?.value || priceValue),
-      String(payment.amount?.currency || "RUB"),
-      JSON.stringify(payment)
-    ]
-  );
-
-  return payment;
 }
 
 async function getYooKassaPayment(paymentId) {
@@ -9840,57 +9717,7 @@ app.get("/health", (req, res) => {
   res.status(200).type("text/plain").send("ok");
 });
 
-app.get("/premium/buy", async (req, res) => {
-  try {
-    const userId = String(req.query.user_id || "").trim();
 
-    if (!isValidUserIdForBroadcast(userId)) {
-      res.status(400).type("text/plain").send("Некорректный user_id.");
-      return;
-    }
-
-    const payment = await createYooKassaPremiumPayment(userId);
-    const confirmationUrl = payment?.confirmation?.confirmation_url;
-
-    if (!confirmationUrl) {
-      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
-    }
-
-    res.redirect(302, confirmationUrl);
-  } catch (error) {
-    console.error("Premium payment create failed:", error);
-    res
-      .status(500)
-      .type("text/plain")
-      .send("Не удалось создать платеж. Вернитесь в бота и попробуйте позже.");
-  }
-});
-
-app.get("/product-card/buy", async (req, res) => {
-  try {
-    const userId = String(req.query.user_id || "").trim();
-
-    if (!isValidUserIdForBroadcast(userId)) {
-      res.status(400).type("text/plain").send("Некорректный user_id.");
-      return;
-    }
-
-    const payment = await createYooKassaProductCardPayment(userId);
-    const confirmationUrl = payment?.confirmation?.confirmation_url;
-
-    if (!confirmationUrl) {
-      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
-    }
-
-    res.redirect(302, confirmationUrl);
-  } catch (error) {
-    console.error("Product card payment create failed:", error);
-    res
-      .status(500)
-      .type("text/plain")
-      .send("Не удалось создать платеж за карточку товара. Вернитесь в бота и попробуйте позже.");
-  }
-});
 
 app.get("/premium/return", (req, res) => {
   res
@@ -9920,31 +9747,6 @@ app.get("/product-card/return", (req, res) => {
     `);
 });
 
-app.get("/music/buy", async (req, res) => {
-  try {
-    const userId = String(req.query.user_id || "").trim();
-
-    if (!isValidUserIdForBroadcast(userId)) {
-      res.status(400).type("text/plain").send("Некорректный user_id.");
-      return;
-    }
-
-    const payment = await createYooKassaMusicPayment(userId);
-    const confirmationUrl = payment?.confirmation?.confirmation_url;
-
-    if (!confirmationUrl) {
-      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
-    }
-
-    res.redirect(302, confirmationUrl);
-  } catch (error) {
-    console.error("Music payment create failed:", error);
-    res
-      .status(500)
-      .type("text/plain")
-      .send("Не удалось создать платеж за музыку. Вернитесь в бота и попробуйте позже.");
-  }
-});
 
 app.get("/music/return", (req, res) => {
   res
@@ -9961,31 +9763,6 @@ app.get("/music/return", (req, res) => {
 });
 
 
-app.get("/prompt-video/buy", async (req, res) => {
-  try {
-    const userId = String(req.query.user_id || "").trim();
-
-    if (!isValidUserIdForBroadcast(userId)) {
-      res.status(400).type("text/plain").send("Некорректный user_id.");
-      return;
-    }
-
-    const payment = await createYooKassaPromptVideoPayment(userId);
-    const confirmationUrl = payment?.confirmation?.confirmation_url;
-
-    if (!confirmationUrl) {
-      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
-    }
-
-    res.redirect(302, confirmationUrl);
-  } catch (error) {
-    console.error("Prompt video payment create failed:", error);
-    res
-      .status(500)
-      .type("text/plain")
-      .send("Не удалось создать платеж за видео. Вернитесь в бота и попробуйте позже.");
-  }
-});
 
 app.get("/prompt-video/return", (req, res) => {
   res
@@ -10001,41 +9778,7 @@ app.get("/prompt-video/return", (req, res) => {
     `);
 });
 
-app.get("/video/buy", async (req, res) => {
-  try {
-    const userId = String(req.query.user_id || "").trim();
 
-    if (!isValidUserIdForBroadcast(userId)) {
-      res.status(400).type("text/plain").send("Некорректный user_id.");
-      return;
-    }
-
-const mode = String(req.query.mode || "").trim();
-
-if (mode === VIDEO_MODE_FAMILY_PAYMENT) {
-  res.redirect(
-    302,
-    `/family-video/buy?user_id=${encodeURIComponent(userId)}`
-  );
-  return;
-}
-
-const payment = await createYooKassaVideoPayment(userId);
-    const confirmationUrl = payment?.confirmation?.confirmation_url;
-
-    if (!confirmationUrl) {
-      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
-    }
-
-    res.redirect(302, confirmationUrl);
-  } catch (error) {
-    console.error("Video payment create failed:", error);
-    res
-      .status(500)
-      .type("text/plain")
-      .send("Не удалось создать платеж за видео. Вернитесь в бота и попробуйте позже.");
-  }
-});
 
 app.get("/video/return", (req, res) => {
   res
@@ -10051,31 +9794,85 @@ app.get("/video/return", (req, res) => {
     `);
 });
 
-app.get("/family-video/buy", async (req, res) => {
-  try {
-    const userId = String(req.query.user_id || "").trim();
-
-    if (!isValidUserIdForBroadcast(userId)) {
-      res.status(400).type("text/plain").send("Некорректный user_id.");
-      return;
-    }
-
-    const payment = await createYooKassaFamilyVideoPayment(userId);
-    const confirmationUrl = payment?.confirmation?.confirmation_url;
-
-    if (!confirmationUrl) {
-      throw new Error(`YooKassa confirmation_url is missing: ${JSON.stringify(payment)}`);
-    }
-
-    res.redirect(302, confirmationUrl);
-  } catch (error) {
-    console.error("Family video payment create failed:", error);
-    res
-      .status(500)
-      .type("text/plain")
-      .send("Не удалось создать платеж за тренд-видео. Вернитесь в бота и попробуйте позже.");
-  }
+const handlePremiumBuyRoute = buildYooKassaBuyRouteHandler({
+  title: "Премиум на месяц",
+  priceRub: PREMIUM_PRICE_RUB,
+  createPayment: createYooKassaPremiumPayment,
+  failMessage: "Не удалось создать платеж. Вернитесь в бота и попробуйте позже."
 });
+
+const handleProductCardBuyRoute = buildYooKassaBuyRouteHandler({
+  title: "Создание карточки товара",
+  priceRub: PRODUCT_CARD_PRICE_RUB,
+  createPayment: createYooKassaProductCardPayment,
+  failMessage: "Не удалось создать платеж за карточку товара. Вернитесь в бота и попробуйте позже."
+});
+
+const handleMusicBuyRoute = buildYooKassaBuyRouteHandler({
+  title: "Создание музыки AI",
+  priceRub: MUSIC_PRICE_RUB,
+  createPayment: createYooKassaMusicPayment,
+  failMessage: "Не удалось создать платеж за музыку. Вернитесь в бота и попробуйте позже."
+});
+
+const handlePromptVideoBuyRoute = buildYooKassaBuyRouteHandler({
+  title: "Создание видео AI",
+  priceRub: PROMPT_VIDEO_PRICE_RUB,
+  createPayment: createYooKassaPromptVideoPayment,
+  failMessage: "Не удалось создать платеж за видео. Вернитесь в бота и попробуйте позже."
+});
+
+const handleVideoBuyStandardRoute = buildYooKassaBuyRouteHandler({
+  title: "Оживление фото AI",
+  priceRub: VIDEO_PRICE_RUB,
+  createPayment: createYooKassaVideoPayment,
+  failMessage: "Не удалось создать платеж за видео. Вернитесь в бота и попробуйте позже."
+});
+
+const handleFamilyVideoBuyRoute = buildYooKassaBuyRouteHandler({
+  title: "ТРЕНД МЕСЯЦА",
+  priceRub: FAMILY_VIDEO_PRICE_RUB,
+  createPayment: createYooKassaFamilyVideoPayment,
+  failMessage: "Не удалось создать платеж за тренд-видео. Вернитесь в бота и попробуйте позже."
+});
+
+async function handleVideoBuyRoute(req, res) {
+  const userId = getPaymentUserIdFromRequest(req);
+  const mode = getPaymentModeFromRequest(req);
+
+  if (!isValidUserIdForBroadcast(userId)) {
+    res.status(400).type("text/plain").send("Некорректный user_id.");
+    return;
+  }
+
+  if (mode === VIDEO_MODE_FAMILY_PAYMENT) {
+    res.redirect(
+      302,
+      `/family-video/buy?user_id=${encodeURIComponent(userId)}`
+    );
+    return;
+  }
+
+  return handleVideoBuyStandardRoute(req, res);
+}
+
+app.get("/premium/buy", handlePremiumBuyRoute);
+app.post("/premium/buy", handlePremiumBuyRoute);
+
+app.get("/product-card/buy", handleProductCardBuyRoute);
+app.post("/product-card/buy", handleProductCardBuyRoute);
+
+app.get("/music/buy", handleMusicBuyRoute);
+app.post("/music/buy", handleMusicBuyRoute);
+
+app.get("/prompt-video/buy", handlePromptVideoBuyRoute);
+app.post("/prompt-video/buy", handlePromptVideoBuyRoute);
+
+app.get("/video/buy", handleVideoBuyRoute);
+app.post("/video/buy", handleVideoBuyRoute);
+
+app.get("/family-video/buy", handleFamilyVideoBuyRoute);
+app.post("/family-video/buy", handleFamilyVideoBuyRoute);
 
 app.get("/family-video/return", (req, res) => {
   res
