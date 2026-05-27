@@ -1098,7 +1098,7 @@ function buildHoroscopeMenuButtons(profile, premium) {
       buttons.push([
         {
           type: "callback",
-          text: "💵 Купить Премиум",
+          text: "💵 ВСЕ В ОДНОМ за 269₽",
           payload: MENU_PREMIUM_PAYLOAD
         }
       ]);
