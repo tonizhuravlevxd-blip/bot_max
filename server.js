@@ -2560,21 +2560,57 @@ async function handleBroadcastCommand(target, adminUserId, userText, incomingIma
         id: recipientUserId
       };
 
-      if (imagePayload) {
-        // Первое сообщение: фото + первый кусок текста.
-        await sendMaxBroadcastImagePost(
-          recipientTarget,
-          chunks[0] || null,
-          imagePayload
-        );
+const postKeyboard = buildBroadcastPostKeyboard(recipientUserId);
 
-        // Если текст длинный, остальные куски отправляем отдельными сообщениями.
-        for (const extraChunk of chunks.slice(1)) {
-          await sendMaxMessage(recipientTarget, extraChunk);
-        }
-      } else {
-        await sendMaxMessage(recipientTarget, broadcastText);
-      }
+if (imagePayload) {
+  // Если текст короткий — отправляем фото + текст + кнопки одним сообщением.
+  if (chunks.length <= 1) {
+    await sendMaxBroadcastImagePost(
+      recipientTarget,
+      chunks[0] || null,
+      imagePayload,
+      [postKeyboard]
+    );
+  } else {
+    // Если текст длинный — фото отправляем с первым куском,
+    // а кнопки ставим под последним текстовым сообщением.
+    await sendMaxBroadcastImagePost(
+      recipientTarget,
+      chunks[0] || null,
+      imagePayload
+    );
+
+    for (const extraChunk of chunks.slice(1, -1)) {
+      await sendMaxMessage(recipientTarget, extraChunk);
+    }
+
+    await sendMaxMessageWithAttachments(
+      recipientTarget,
+      chunks[chunks.length - 1],
+      [postKeyboard]
+    );
+  }
+} else {
+  // Если текст короткий — отправляем текст + кнопки.
+  if (chunks.length <= 1) {
+    await sendMaxMessageWithAttachments(
+      recipientTarget,
+      broadcastText,
+      [postKeyboard]
+    );
+  } else {
+    // Если текст длинный — режем на части, кнопку ставим под последней частью.
+    for (const chunk of chunks.slice(0, -1)) {
+      await sendMaxMessage(recipientTarget, chunk);
+    }
+
+    await sendMaxMessageWithAttachments(
+      recipientTarget,
+      chunks[chunks.length - 1],
+      [postKeyboard]
+    );
+  }
+}
 
       sentCount += 1;
 } catch (error) {
@@ -5535,6 +5571,37 @@ function buildBackButtonKeyboard() {
   ];
 }
 
+function buildBroadcastPostKeyboard(userId) {
+  const buttons = [];
+
+  const buyUrl = buildPremiumBuyUrl(userId);
+
+  if (buyUrl && YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY) {
+    buttons.push([
+      {
+        type: "link",
+        text: `💳 Купить всё в одном — ${Number(PREMIUM_PRICE_RUB).toFixed(0)} ₽`,
+        url: buyUrl
+      }
+    ]);
+  }
+
+  buttons.push([
+    {
+      type: "callback",
+      text: "🏠 МЕНЮ",
+      payload: MENU_BACK_PAYLOAD
+    }
+  ]);
+
+  return {
+    type: "inline_keyboard",
+    payload: {
+      buttons
+    }
+  };
+}
+
 function buildCreatePhotoKeyboard() {
   return [
     [
@@ -7453,12 +7520,18 @@ async function sendMaxImageUrlWithAttachments(
   throw lastError;
 }
 
-async function sendMaxBroadcastImagePost(target, text, imagePayload) {
+async function sendMaxBroadcastImagePost(
+  target,
+  text,
+  imagePayload,
+  extraAttachments = []
+) {
   const attachments = [
     {
       type: "image",
       payload: imagePayload
-    }
+    },
+    ...extraAttachments
   ];
 
   let lastError;
