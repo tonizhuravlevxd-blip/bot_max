@@ -223,6 +223,17 @@ const MENU_SPONSORS_PAYLOAD = "menu_sponsors";
 const MENU_BACK_PAYLOAD = "menu_back";
 const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
 const MENU_HOROSCOPE_PAYLOAD = "menu_horoscope";
+const MENU_EARN_PAYLOAD = "menu_earn";
+const EARN_WITHDRAW_PAYLOAD = "earn_withdraw";
+const REFERRAL_START_PREFIX = "ref_";
+const REFERRAL_REWARD_KOPECKS = Number(process.env.REFERRAL_REWARD_KOPECKS || 100); // 1 рубль
+const REFERRAL_MIN_WITHDRAW_KOPECKS = Number(process.env.REFERRAL_MIN_WITHDRAW_KOPECKS || 100000); // 1000 рублей
+const REFERRAL_BASE_URL = String(
+  process.env.REFERRAL_BASE_URL ||
+    process.env.MAX_BOT_REFERRAL_URL ||
+    process.env.MAX_BOT_PUBLIC_URL ||
+    ""
+).replace(/\/+$/, "");
 const HOROSCOPE_PROFILE_PAYLOAD = "horoscope_profile";
 const HOROSCOPE_START_PAYLOAD = "horoscope_start";
 const HOROSCOPE_YES_NO_PAYLOAD = "horoscope_yes_no";
@@ -406,6 +417,7 @@ Strict requirements:
 }
 
 const userFamilyVideoDrafts = new Map();
+const userEarnWithdrawStates = new Map();
 const FAMILY_VIDEO_DRAFT_TTL_MS = Number(
   process.env.FAMILY_VIDEO_DRAFT_TTL_MS || 20 * 60_000
 );
@@ -5493,13 +5505,6 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "🔥 ТРЕНД МЕСЯЦА",
-        payload: MENU_CREATE_FAMILY_VIDEO_PAYLOAD
-      }
-    ],
-    [
-      {
-        type: "callback",
         text: "📹 Создать видео",
         payload: MENU_CREATE_PROMPT_VIDEO_PAYLOAD
       }
@@ -5530,6 +5535,13 @@ function buildMainMenuButtons() {
         type: "callback",
         text: "🌙 Гороскоп",
         payload: MENU_HOROSCOPE_PAYLOAD
+      }
+    ],
+    [
+      {
+        type: "callback",
+        text: "Заработать💵",
+        payload: MENU_EARN_PAYLOAD
       }
     ],
     [
@@ -5601,6 +5613,594 @@ function buildBroadcastPostKeyboard(userId) {
     }
   };
 }
+
+
+function formatKopecksRub(kopecks) {
+  return (Number(kopecks || 0) / 100).toFixed(2).replace(/\.00$/, "");
+}
+
+function getReferralMonthKey(date = new Date()) {
+  return getMoscowDateYmd(date).slice(0, 7);
+}
+
+function getReferralBaseUrl() {
+  if (REFERRAL_BASE_URL) return REFERRAL_BASE_URL;
+
+  return "";
+}
+
+function buildReferralLink(userId) {
+  const baseUrl = getReferralBaseUrl();
+  const key = encodeURIComponent(getUserRequestKey(userId));
+
+  if (!baseUrl || !key || key === "unknown") {
+    return "";
+  }
+
+  return `${baseUrl}?startapp=${encodeURIComponent(`${REFERRAL_START_PREFIX}${key}`)}`;
+}
+
+function getStartPayload(update) {
+  const candidates = [
+    update?.payload,
+    update?.start_payload,
+    update?.startPayload,
+    update?.message?.payload,
+    update?.message?.start_payload,
+    update?.message?.body?.payload,
+    update?.message?.body?.start_payload,
+    update?.message?.body?.text
+  ];
+
+  for (const value of candidates) {
+    const text = String(value || "").trim();
+
+    if (!text) continue;
+
+    const startMatch = text.match(/^\/start(?:@\S+)?\s+(.+)$/i);
+    if (startMatch) return startMatch[1].trim();
+
+    return text;
+  }
+
+  return "";
+}
+
+function parseReferralStartPayload(payload) {
+  const text = String(payload || "").trim();
+
+  if (!text.startsWith(REFERRAL_START_PREFIX)) {
+    return "";
+  }
+
+  return decodeURIComponent(text.slice(REFERRAL_START_PREFIX.length)).trim();
+}
+
+function buildEarnKeyboard(balanceKopecks) {
+  const buttons = [
+    [
+      {
+        type: "callback",
+        text: "📨 Моя реферальная ссылка",
+        payload: MENU_EARN_PAYLOAD
+      }
+    ]
+  ];
+
+  buttons.push([
+    {
+      type: "callback",
+      text:
+        Number(balanceKopecks || 0) >= REFERRAL_MIN_WITHDRAW_KOPECKS
+          ? "💳 Вывести"
+          : `💳 Вывести от ${formatKopecksRub(REFERRAL_MIN_WITHDRAW_KOPECKS)}₽`,
+      payload: EARN_WITHDRAW_PAYLOAD
+    }
+  ]);
+
+  buttons.push([
+    {
+      type: "callback",
+      text: "⬅️ Назад к меню",
+      payload: MENU_BACK_PAYLOAD
+    }
+  ]);
+
+  return buttons;
+}
+
+async function initReferralDb() {
+  if (!dbPool) return;
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS max_bot_referrals (
+      referred_user_id TEXT NOT NULL,
+      bot_key TEXT NOT NULL,
+      referrer_user_id TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      last_activity_at TIMESTAMPTZ,
+      PRIMARY KEY (referred_user_id, bot_key)
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_referrals_referrer
+    ON max_bot_referrals (referrer_user_id, bot_key)
+  `);
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS max_bot_referral_monthly_rewards (
+      referrer_user_id TEXT NOT NULL,
+      referred_user_id TEXT NOT NULL,
+      bot_key TEXT NOT NULL,
+      month_key TEXT NOT NULL,
+      amount_kopecks INTEGER NOT NULL DEFAULT 100,
+      action_count INTEGER NOT NULL DEFAULT 1,
+      last_activity_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      withdrawn_at TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (referrer_user_id, referred_user_id, bot_key, month_key)
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_referral_rewards_balance
+    ON max_bot_referral_monthly_rewards (referrer_user_id, bot_key, month_key, withdrawn_at)
+  `);
+
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS max_bot_referral_withdraw_requests (
+      id BIGSERIAL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      bot_key TEXT NOT NULL,
+      month_key TEXT NOT NULL,
+      amount_kopecks INTEGER NOT NULL,
+      phone TEXT NOT NULL,
+      payout_details TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    )
+  `);
+
+  await dbPool.query(`
+    CREATE INDEX IF NOT EXISTS idx_max_bot_referral_withdraw_status
+    ON max_bot_referral_withdraw_requests (bot_key, status, created_at)
+  `);
+
+  console.log("Referral DB initialized");
+}
+
+async function handleReferralStart(userId, payload) {
+  if (!dbPool) return false;
+
+  const referredUserId = getUserRequestKey(userId);
+  const referrerUserId = parseReferralStartPayload(payload);
+
+  if (
+    !isValidUserIdForBroadcast(referredUserId) ||
+    !isValidUserIdForBroadcast(referrerUserId) ||
+    referredUserId === referrerUserId
+  ) {
+    return false;
+  }
+
+  await dbPool.query(
+    `
+      INSERT INTO max_bot_referrals (referred_user_id, bot_key, referrer_user_id)
+      VALUES ($1, $2, $3)
+      ON CONFLICT (referred_user_id, bot_key) DO NOTHING
+    `,
+    [referredUserId, BOT_KEY, referrerUserId]
+  );
+
+  return true;
+}
+
+async function markReferralActivity(userId, actionType = "activity") {
+  if (!dbPool) return false;
+
+  const referredUserId = getUserRequestKey(userId);
+
+  if (!isValidUserIdForBroadcast(referredUserId)) return false;
+
+  const monthKey = getReferralMonthKey();
+
+  const referralResult = await dbPool.query(
+    `
+      SELECT referrer_user_id
+      FROM max_bot_referrals
+      WHERE referred_user_id = $1 AND bot_key = $2
+      LIMIT 1
+    `,
+    [referredUserId, BOT_KEY]
+  );
+
+  const referrerUserId = String(referralResult.rows[0]?.referrer_user_id || "").trim();
+
+  if (
+    !isValidUserIdForBroadcast(referrerUserId) ||
+    referrerUserId === referredUserId
+  ) {
+    return false;
+  }
+
+  await dbPool.query(
+    `
+      UPDATE max_bot_referrals
+      SET last_activity_at = NOW()
+      WHERE referred_user_id = $1 AND bot_key = $2
+    `,
+    [referredUserId, BOT_KEY]
+  );
+
+  await dbPool.query(
+    `
+      INSERT INTO max_bot_referral_monthly_rewards (
+        referrer_user_id, referred_user_id, bot_key, month_key,
+        amount_kopecks, action_count, last_activity_at
+      )
+      VALUES ($1, $2, $3, $4, $5, 1, NOW())
+      ON CONFLICT (referrer_user_id, referred_user_id, bot_key, month_key)
+      DO UPDATE SET
+        action_count = max_bot_referral_monthly_rewards.action_count + 1,
+        last_activity_at = NOW()
+    `,
+    [referrerUserId, referredUserId, BOT_KEY, monthKey, REFERRAL_REWARD_KOPECKS]
+  );
+
+  return true;
+}
+
+async function getReferralStats(userId) {
+  const key = getUserRequestKey(userId);
+  const monthKey = getReferralMonthKey();
+
+  if (!dbPool) {
+    return {
+      balanceKopecks: 0,
+      invitedTotal: 0,
+      activeThisMonth: 0,
+      monthKey
+    };
+  }
+
+  const statsResult = await dbPool.query(
+    `
+      SELECT
+        COALESCE(SUM(r.amount_kopecks) FILTER (WHERE r.withdrawn_at IS NULL), 0)::int AS balance_kopecks,
+        COUNT(DISTINCT r.referred_user_id)::int AS active_this_month,
+        (
+          SELECT COUNT(*)::int
+          FROM max_bot_referrals ref
+          WHERE ref.referrer_user_id = $1 AND ref.bot_key = $2
+        ) AS invited_total
+      FROM max_bot_referral_monthly_rewards r
+      WHERE r.referrer_user_id = $1
+        AND r.bot_key = $2
+        AND r.month_key = $3
+    `,
+    [key, BOT_KEY, monthKey]
+  );
+
+  const row = statsResult.rows[0] || {};
+
+  return {
+    balanceKopecks: Number(row.balance_kopecks || 0),
+    invitedTotal: Number(row.invited_total || 0),
+    activeThisMonth: Number(row.active_this_month || 0),
+    monthKey
+  };
+}
+
+async function sendEarnMenu(target, userId) {
+  const stats = await getReferralStats(userId);
+  const referralLink = buildReferralLink(userId);
+  const monthLabel = stats.monthKey ? `${stats.monthKey}` : "текущий месяц";
+
+  const text = [
+    "💵 **Заработать на приглашениях**",
+    "",
+    "Приглашайте людей по своей реферальной ссылке.",
+    `За каждого приглашённого пользователя, который в течение месяца реально пользуется ботом, начисляется **${formatKopecksRub(REFERRAL_REWARD_KOPECKS)}₽**.`,
+    "",
+    "**Что считается активностью:**",
+    "• человек пишет боту;",
+    "• нажимает кнопки;",
+    "• создаёт фото, видео, музыку, карточки или пользуется другими функциями.",
+    "",
+    `**Баланс за ${monthLabel}:** ${formatKopecksRub(stats.balanceKopecks)}₽`,
+    `**Активных приглашённых в этом месяце:** ${stats.activeThisMonth}`,
+    `**Всего пришло по ссылке:** ${stats.invitedTotal}`,
+    "",
+    `**Вывод:** от ${formatKopecksRub(REFERRAL_MIN_WITHDRAW_KOPECKS)}₽ по СБП на любой номер.`,
+    "",
+    "Важно: подсчёт идёт только по активным пользователям. Если приглашённый человек в этом месяце не проявлял активность в боте, начисление за него не попадает в баланс.",
+    "",
+    referralLink
+      ? `**Ваша ссылка:**\n${referralLink}`
+      : "⚠️ Реферальная ссылка не настроена. Добавьте переменную REFERRAL_BASE_URL, например: https://max.ru/имя_вашего_бота"
+  ].join("\n");
+
+  return sendMaxMessageWithAttachments(target, text, [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildEarnKeyboard(stats.balanceKopecks)
+      }
+    }
+  ]);
+}
+
+function sanitizePayoutDetails(text) {
+  return String(text || "")
+    .replace(/[\r\n]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+function extractPhoneFromText(text) {
+  const digits = String(text || "").replace(/\D/g, "");
+
+  if (digits.length < 10 || digits.length > 15) {
+    return "";
+  }
+
+  return digits;
+}
+
+async function startReferralWithdraw(target, userId) {
+  const stats = await getReferralStats(userId);
+
+  if (stats.balanceKopecks < REFERRAL_MIN_WITHDRAW_KOPECKS) {
+    return sendMaxMessageWithAttachments(
+      target,
+      [
+        "💳 **Вывод пока недоступен**",
+        "",
+        `Ваш баланс: **${formatKopecksRub(stats.balanceKopecks)}₽**.`,
+        `Минимальная сумма вывода: **${formatKopecksRub(REFERRAL_MIN_WITHDRAW_KOPECKS)}₽**.`,
+        "",
+        "Продолжайте приглашать людей по своей ссылке."
+      ].join("\n"),
+      [
+        {
+          type: "inline_keyboard",
+          payload: {
+            buttons: buildEarnKeyboard(stats.balanceKopecks)
+          }
+        }
+      ]
+    );
+  }
+
+  userEarnWithdrawStates.set(getUserRequestKey(userId), {
+    createdAt: Date.now()
+  });
+
+  return sendMaxMessageWithAttachments(
+    target,
+    [
+      "💳 **Заявка на вывод**",
+      "",
+      `Доступно к выводу: **${formatKopecksRub(stats.balanceKopecks)}₽**.`,
+      "",
+      "Напишите одним сообщением:",
+      "1. номер телефона для СБП;",
+      "2. банк, если нужно;",
+      "3. ФИО или имя получателя.",
+      "",
+      "Пример:",
+      "`+79990000000, Сбер, Иван Иванов`"
+    ].join("\n"),
+    [
+      {
+        type: "inline_keyboard",
+        payload: {
+          buttons: buildBackButtonKeyboard()
+        }
+      }
+    ]
+  );
+}
+
+async function handleReferralWithdrawText(target, userId, userText) {
+  const key = getUserRequestKey(userId);
+  const state = userEarnWithdrawStates.get(key);
+
+  if (!state) return false;
+
+  const ttlMs = Number(process.env.REFERRAL_WITHDRAW_STATE_TTL_MS || 15 * 60_000);
+
+  if (Date.now() - Number(state.createdAt || 0) > ttlMs) {
+    userEarnWithdrawStates.delete(key);
+    await sendMaxMessage(target, "Заявка устарела. Нажмите «Заработать💵» → «Вывести» ещё раз.");
+    return true;
+  }
+
+  const payoutDetails = sanitizePayoutDetails(userText);
+  const phone = extractPhoneFromText(payoutDetails);
+
+  if (!phone) {
+    await sendMaxMessage(
+      target,
+      "Не вижу корректный номер телефона. Напишите номер для СБП и данные получателя одним сообщением."
+    );
+    return true;
+  }
+
+  const request = await createReferralWithdrawRequest(userId, phone, payoutDetails);
+
+  userEarnWithdrawStates.delete(key);
+
+  if (!request) {
+    await sendMaxMessage(
+      target,
+      "Не получилось создать заявку: баланс уже меньше минимальной суммы или база временно недоступна."
+    );
+    return true;
+  }
+
+  await sendMaxMessage(
+    target,
+    [
+      "✅ **Заявка на вывод создана**",
+      "",
+      `Номер заявки: **#${request.id}**`,
+      `Сумма: **${formatKopecksRub(request.amountKopecks)}₽**`,
+      "",
+      "Администратор увидит её в команде `/cash`."
+    ].join("\n")
+  );
+
+  return true;
+}
+
+async function createReferralWithdrawRequest(userId, phone, payoutDetails) {
+  if (!dbPool) return null;
+
+  const key = getUserRequestKey(userId);
+  const monthKey = getReferralMonthKey();
+
+  const client = await dbPool.connect();
+
+  try {
+    await client.query("BEGIN");
+
+    const statsResult = await client.query(
+      `
+        SELECT COALESCE(SUM(amount_kopecks), 0)::int AS amount_kopecks
+        FROM max_bot_referral_monthly_rewards
+        WHERE referrer_user_id = $1
+          AND bot_key = $2
+          AND month_key = $3
+          AND withdrawn_at IS NULL
+        FOR UPDATE
+      `,
+      [key, BOT_KEY, monthKey]
+    );
+
+    const amountKopecks = Number(statsResult.rows[0]?.amount_kopecks || 0);
+
+    if (amountKopecks < REFERRAL_MIN_WITHDRAW_KOPECKS) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    const requestResult = await client.query(
+      `
+        INSERT INTO max_bot_referral_withdraw_requests (
+          user_id, bot_key, month_key, amount_kopecks, phone, payout_details
+        )
+        VALUES ($1, $2, $3, $4, $5, $6)
+        RETURNING id, amount_kopecks
+      `,
+      [key, BOT_KEY, monthKey, amountKopecks, phone, payoutDetails]
+    );
+
+    await client.query(
+      `
+        UPDATE max_bot_referral_monthly_rewards
+        SET withdrawn_at = NOW()
+        WHERE referrer_user_id = $1
+          AND bot_key = $2
+          AND month_key = $3
+          AND withdrawn_at IS NULL
+      `,
+      [key, BOT_KEY, monthKey]
+    );
+
+    await client.query("COMMIT");
+
+    return {
+      id: requestResult.rows[0].id,
+      amountKopecks: Number(requestResult.rows[0].amount_kopecks || 0)
+    };
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function sendCashAdminReport(target, adminUserId) {
+  if (!isAdminUser(adminUserId)) {
+    await sendMaxMessage(target, "⛔ Эта команда доступна только администратору.");
+    return true;
+  }
+
+  if (!dbPool) {
+    await sendMaxMessage(target, "⚠️ DATABASE_URL не задан. Раздел выплат недоступен.");
+    return true;
+  }
+
+  const monthKey = getReferralMonthKey();
+
+  const requests = await dbPool.query(
+    `
+      SELECT id, user_id, amount_kopecks, phone, payout_details, status, created_at
+      FROM max_bot_referral_withdraw_requests
+      WHERE bot_key = $1
+        AND status = 'pending'
+      ORDER BY created_at ASC
+      LIMIT 30
+    `,
+    [BOT_KEY]
+  );
+
+  const readyUsers = await dbPool.query(
+    `
+      SELECT referrer_user_id AS user_id,
+             COALESCE(SUM(amount_kopecks), 0)::int AS balance_kopecks,
+             COUNT(DISTINCT referred_user_id)::int AS active_refs
+      FROM max_bot_referral_monthly_rewards
+      WHERE bot_key = $1
+        AND month_key = $2
+        AND withdrawn_at IS NULL
+      GROUP BY referrer_user_id
+      HAVING COALESCE(SUM(amount_kopecks), 0) >= $3
+      ORDER BY balance_kopecks DESC
+      LIMIT 30
+    `,
+    [BOT_KEY, monthKey, REFERRAL_MIN_WITHDRAW_KOPECKS]
+  );
+
+  const lines = [
+    "💵 **/cash — реферальные выплаты**",
+    "",
+    `Месяц: **${monthKey}**`,
+    "",
+    "**Заявки на вывод:**"
+  ];
+
+  if (!requests.rows.length) {
+    lines.push("Заявок пока нет.");
+  } else {
+    for (const row of requests.rows) {
+      lines.push(
+        `#${row.id} — user_id: ${row.user_id}, сумма: ${formatKopecksRub(row.amount_kopecks)}₽, телефон: ${row.phone}, данные: ${row.payout_details}`
+      );
+    }
+  }
+
+  lines.push("", "**Пользователи, у кого уже есть 1000₽+, но заявки ещё нет:**");
+
+  if (!readyUsers.rows.length) {
+    lines.push("Пока никого.");
+  } else {
+    for (const row of readyUsers.rows) {
+      lines.push(
+        `user_id: ${row.user_id}, баланс: ${formatKopecksRub(row.balance_kopecks)}₽, активных приглашённых: ${row.active_refs}`
+      );
+    }
+  }
+
+  await sendMaxMessage(target, lines.join("\n"));
+  return true;
+}
+
 
 function buildCreatePhotoKeyboard() {
   return [
@@ -8875,7 +9475,7 @@ async function finishVideoBillingAfterSuccess(target, userId, videoAccess, famil
       `Осталось оплаченных видео: **${consumeResult.creditsLeft || 0}**.`,
       "",
       family
-        ? "Для нового тренд-видео нажмите «🔥 ТРЕНД МЕСЯЦА» в меню."
+        ? "Функция тренд-видео временно скрыта из меню."
         : "Для нового видео нажмите «🎬 Оживить фото» в меню и купите ещё один кредит."
     ].join("\n")
   );
@@ -8897,7 +9497,7 @@ async function finishFamilyVideoBillingAfterSuccess(target, userId) {
       "",
       `Осталось оплаченных тренд-видео: **${consumeResult.creditsLeft || 0}**.`,
       "",
-      "Для нового тренд-видео нажмите «🔥 ТРЕНД МЕСЯЦА» в меню."
+      "Функция тренд-видео временно скрыта из меню."
     ].join("\n")
   );
 
@@ -8991,6 +9591,11 @@ if (shouldRegisterBotUser(broadcastUserId)) {
       const firstName = getUserFirstName(update);
       const namePrefix = firstName ? `, ${firstName}!` : "!";
 
+      const startPayload = getStartPayload(update);
+      await handleReferralStart(userId, startPayload).catch((error) => {
+        console.warn("Failed to save referral start:", error?.message || error);
+      });
+
       const text =
         `🙋🏻‍♂️ **Привет${namePrefix}**\n\n` +
         "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/8Z6BsYfupgMq1Q) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
@@ -9010,6 +9615,15 @@ const incomingImageUrl = incomingImageUrls[0] || "";
       updateType === "message_callback" ||
       Boolean(callbackId) ||
       Boolean(callbackPayload);
+
+    if (updateType === "message_created" || isCallbackUpdate) {
+      markReferralActivity(
+        userId,
+        updateType === "message_created" ? "message" : "callback"
+      ).catch((error) => {
+        console.warn("Failed to mark referral activity:", error?.message || error);
+      });
+    }
 
     // Отдельная обработка callback-кнопок
 if (isCallbackUpdate) {
@@ -9159,6 +9773,24 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         return;
       }
 
+      if (callbackPayload === MENU_EARN_PAYLOAD) {
+        clearUserImageMode(userId);
+        clearFamilyVideoDraft(userId);
+        clearHoroscopeSetupState(userId);
+
+        await sendEarnMenu(target, userId);
+        return;
+      }
+
+      if (callbackPayload === EARN_WITHDRAW_PAYLOAD) {
+        clearUserImageMode(userId);
+        clearFamilyVideoDraft(userId);
+        clearHoroscopeSetupState(userId);
+
+        await startReferralWithdraw(target, userId);
+        return;
+      }
+
   if (callbackPayload === HOROSCOPE_YES_NO_PAYLOAD) {
   clearUserImageMode(userId);
   clearFamilyVideoDraft(userId);
@@ -9249,6 +9881,14 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
 
       return;
     }
+    // Админ-команда проверки реферальных выплат
+    if (String(userText || "").trim().toLowerCase() === "/cash") {
+      if (updateType !== "message_created") return;
+
+      await sendCashAdminReport(target, userId);
+      return;
+    }
+
     // Админ-команда рассылки всем пользователям бота
     if (isBroadcastCommand(userText)) {
       if (updateType !== "message_created") return;
@@ -9266,6 +9906,10 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
     }
 
     if (updateType !== "message_created") return;
+
+    if (await handleReferralWithdrawText(target, userId, userText)) {
+      return;
+    }
 
     const floodCheckText = `${userText || ""} ${incomingImageUrl ? "[image]" : ""}`;
 
@@ -10237,6 +10881,7 @@ resetDailyLimits();
     await initBroadcastUsersDb();
     await initLimitsDb();
     await initPremiumDb();
+    await initReferralDb();
     await initHoroscopeDb();
   } catch (error) {
     console.warn("DB init failed:", error?.message || error);
