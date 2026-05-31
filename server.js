@@ -227,7 +227,7 @@ const MENU_EARN_PAYLOAD = "menu_earn";
 const EARN_WITHDRAW_PAYLOAD = "earn_withdraw";
 const REFERRAL_START_PREFIX = "ref_";
 const REFERRAL_REWARD_KOPECKS = Number(process.env.REFERRAL_REWARD_KOPECKS || 100); // 1 рубль
-const REFERRAL_MIN_WITHDRAW_KOPECKS = Number(process.env.REFERRAL_MIN_WITHDRAW_KOPECKS || 100000); // 1000 рублей
+const REFERRAL_MIN_WITHDRAW_KOPECKS = Number(process.env.REFERRAL_MIN_WITHDRAW_KOPECKS || 50000); // 500 рублей
 const REFERRAL_BASE_URL = String(
   process.env.REFERRAL_BASE_URL ||
     process.env.MAX_BOT_REFERRAL_URL ||
@@ -5540,7 +5540,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "Заработать💵",
+        text: "💰Заработать",
         payload: MENU_EARN_PAYLOAD
       }
     ],
@@ -5681,7 +5681,7 @@ function buildEarnKeyboard(balanceKopecks) {
     [
       {
         type: "callback",
-        text: "📨 Моя реферальная ссылка",
+        text: "📨 Обновить",
         payload: MENU_EARN_PAYLOAD
       }
     ]
@@ -5899,9 +5899,9 @@ async function sendEarnMenu(target, userId) {
   const monthLabel = stats.monthKey ? `${stats.monthKey}` : "текущий месяц";
 
   const text = [
-    "💵 **Заработать на приглашениях**",
+    "💰 **Заработать на приглашениях**",
     "",
-    "Приглашайте людей по своей реферальной ссылке.",
+    "🧸Приглашайте людей по своей реферальной ссылке.",
     `За каждого приглашённого пользователя, который в течение месяца реально пользуется ботом, начисляется **${formatKopecksRub(REFERRAL_REWARD_KOPECKS)}₽**.`,
     "",
     "**Что считается активностью:**",
@@ -5909,13 +5909,13 @@ async function sendEarnMenu(target, userId) {
     "• нажимает кнопки;",
     "• создаёт фото, видео, музыку, карточки или пользуется другими функциями.",
     "",
-    `**Баланс за ${monthLabel}:** ${formatKopecksRub(stats.balanceKopecks)}₽`,
-    `**Активных приглашённых в этом месяце:** ${stats.activeThisMonth}`,
-    `**Всего пришло по ссылке:** ${stats.invitedTotal}`,
+    `**💷Баланс за ${monthLabel}:** ${formatKopecksRub(stats.balanceKopecks)}₽`,
+    `**🤾‍♀️Активных приглашённых:** ${stats.activeThisMonth}`,
+    `**🗂️Всего пришло по ссылке:** ${stats.invitedTotal}`,
     "",
     `**Вывод:** от ${formatKopecksRub(REFERRAL_MIN_WITHDRAW_KOPECKS)}₽ по СБП на любой номер.`,
     "",
-    "Важно: подсчёт идёт только по активным пользователям. Если приглашённый человек в этом месяце не проявлял активность в боте, начисление за него не попадает в баланс.",
+    "*🧾Важно: подсчёт идёт только по активным пользователям. Совет: Кидайте ссылку в чат с друзьями или группы*",
     "",
     referralLink
       ? `**Ваша ссылка:**\n${referralLink}`
@@ -6015,7 +6015,7 @@ async function handleReferralWithdrawText(target, userId, userText) {
 
   if (Date.now() - Number(state.createdAt || 0) > ttlMs) {
     userEarnWithdrawStates.delete(key);
-    await sendMaxMessage(target, "Заявка устарела. Нажмите «Заработать💵» → «Вывести» ещё раз.");
+    await sendMaxMessage(target, "Заявка устарела. Нажмите «💰Заработать» → «Вывести» ещё раз.");
     return true;
   }
 
