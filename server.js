@@ -5637,7 +5637,7 @@ function buildReferralLink(userId) {
     return "";
   }
 
-  return `${baseUrl}?startapp=${encodeURIComponent(`${REFERRAL_START_PREFIX}${key}`)}`;
+  return `${baseUrl}?start=${encodeURIComponent(`${REFERRAL_START_PREFIX}${key}`)}`;
 }
 
 function getStartPayload(update) {
