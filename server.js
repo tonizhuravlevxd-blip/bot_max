@@ -9185,7 +9185,7 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
     await sendMaxMessage(
       target,
       userLimits.premium
-        ? "🥱Вы достигли **Premium-лимита** на сегодня: 10 фото. Приходите позже и продолжайте."
+        ? "🥱Вы достигли **Premium-лимита** на сегодня: 20 фото. Приходите позже и продолжайте."
         : "🥱Вы достигли лимита на создание **Шедевров** сегодня, приходите позже и продолжайте"
     );
     return;
@@ -9284,7 +9284,7 @@ async function handleReplacementImageRequest(
     await sendMaxMessage(
       target,
       userLimits.premium
-        ? "🥱Вы достигли **Premium-лимита** на сегодня: 10 фото. Приходите позже и продолжайте."
+        ? "🥱Вы достигли **Premium-лимита** на сегодня: 20 фото. Приходите позже и продолжайте."
         : "🥱Вы достигли лимита на создание **Шедевров** сегодня, приходите позже и продолжайте"
     );
     return;
@@ -10351,7 +10351,7 @@ if (photoStyleModeActive) {
 
   status = await startDynamicStatus(
     target,
-    "Фото создаётся в выбранном стиле 🛵"
+    "Фото создаётся в выбранном стиле 🏎️"
   );
 
   const stylePrompt = buildPhotoStylePrompt(styleKey, userText);
@@ -10664,7 +10664,7 @@ if (isVideoRequest(userText, Boolean(incomingImageUrl))) {
 
 
     if (isImageRequest(userText, Boolean(incomingImageUrl))) {
-      status = await startDynamicStatus(target, "🔮Шедевр создается");
+      status = await startDynamicStatus(target, "🏜️Шедевр создается");
 
       await handleImageRequest(update, target, userText, incomingImageUrl, userId);
 
@@ -10679,7 +10679,7 @@ if (isVideoRequest(userText, Boolean(incomingImageUrl))) {
       await sendMaxMessage(
         target,
         userLimits.premium
-          ? "Кажется вам надо немного отдохнуть от ИИ🏝️ **Premium-лимит на сегодня: 16 запросов CHATgpt**."
+          ? "Кажется вам надо немного отдохнуть от ИИ🏝️ **Premium-лимит на сегодня: 20 запросов CHATgpt**."
           : "Кажется вам надо немного отдохнуть от ИИ🏝️(chatgpt), **приходите чуть позже и продолжайте**🦦"
       );
       return;
