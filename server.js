@@ -6970,7 +6970,7 @@ async function sendPremiumInfo(target, userId) {
     `**1️⃣ ${PREMIUM_IMAGE_REQUEST_LIMIT} фото в день с лучшей моделью.**\n` +
     `**2️⃣ ChatGPT ${PREMIUM_CHATGPT_REQUEST_LIMIT} запросов в день.**\n` +
     `**3️⃣ Оживить фото: ${PREMIUM_VIDEO_REQUEST_LIMIT} раз в день.**\n` +
-    "**4️⃣ Ежедневный персональный гороскоп по выбранному времени.🧿**\n" +
+    "**4️⃣ Ежедневный персональный гороскоп по выбранному времени.**\n" +
     "**5️⃣ Уйдет обязательная подписка на каналы.**\n" +
     "**6️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
     `•🎥создать видео: **+${PREMIUM_BONUS_PROMPT_VIDEO_CREDITS}**;\n` +
