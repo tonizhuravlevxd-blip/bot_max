@@ -43,7 +43,7 @@ const PREMIUM_CHATGPT_REQUEST_LIMIT = Number(process.env.PREMIUM_CHATGPT_REQUEST
 // Это НЕ бонусный накопительный кредит: лимит обновляется каждый день.
 const PREMIUM_VIDEO_REQUEST_LIMIT = Number(process.env.PREMIUM_VIDEO_REQUEST_LIMIT || 1);
 const PREMIUM_DURATION_DAYS = Number(process.env.PREMIUM_DURATION_DAYS || 30);
-const PREMIUM_PRICE_RUB = process.env.PREMIUM_PRICE_RUB || "269.00";
+const PREMIUM_PRICE_RUB = process.env.PREMIUM_PRICE_RUB || "299.00";
 
 const PREMIUM_BONUS_VIDEO_CREDITS = 0; // Premium больше не дает бонусы на «оживить фото / видео по фото».
 const PREMIUM_BONUS_PROMPT_VIDEO_CREDITS = Number(process.env.PREMIUM_BONUS_PROMPT_VIDEO_CREDITS || 2);
@@ -2382,7 +2382,7 @@ async function initPremiumDb() {
       user_id TEXT NOT NULL,
       bot_key TEXT NOT NULL,
       status TEXT NOT NULL DEFAULT 'pending',
-      amount TEXT NOT NULL DEFAULT '269.00',
+      amount TEXT NOT NULL DEFAULT '299.00',
       currency TEXT NOT NULL DEFAULT 'RUB',
       raw JSONB,
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
@@ -5618,7 +5618,7 @@ function buildMainMenuButtons() {
     [
       {
         type: "callback",
-        text: "💵 ВСЕ В ОДНОМ ЗА 269₽",
+        text: "💵 ВСЕ В ОДНОМ ЗА 299₽",
         payload: MENU_PREMIUM_PAYLOAD
       }
     ]
