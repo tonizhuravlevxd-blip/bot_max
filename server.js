@@ -276,12 +276,12 @@ const PHOTO_STYLES = {
     prompt:
       "Transform this photo into a realistic outdoor summer cookout scene with a warm sunset atmosphere. The person is casually dressed and cooking skewers on a charcoal grill in a cozy backyard setting. Natural lighting, photorealistic style, realistic anatomy, detailed textures, cinematic color grading, high-quality photography, 1:1 aspect ratio."
   },
-  lemonade: {
-    button: "⚾ ТРЕНД",
-    title: "⚾ ТРЕНД НА СТАДИОНЕ",
-    prompt:
-      "Edit my photo into a realistic sports broadcast crowd shot. Preserve my identity exactly: same face, same facial features, same skin tone, same hairstyle, same age, same proportions. Place me sitting in the audience at a baseball stadium during a live game. Make it look like a candid TV broadcast close-up of a spectator. I am wearing a blue denim jacket over a gray shirt and holding a plastic cup with a coca cola soda drink. Surround me with other fans in stadium seats, with blue chairs visible. Add subtle broadcast-style scoreboard graphics in the frame corners, creating the feeling of a live sports TV moment. Keep the image highly realistic, natural skin texture, soft stadium lighting, telephoto lens look, shallow depth of field, background crowd slightly blurred. The result should look like a real televised sports event frame, not a studio portrait."
-  },
+lemonade: {
+  button: "🎎 ЗАМЕНА",
+  title: "🎎ЗАМЕНА ЧЕЛОВЕКА",
+  prompt:
+    "Заменить человека на изображении (Фото 1) на человека с Фото 2. Полностью сохранить исходную сцену, фон, освещение, перспективу, позу и композицию кадра. Лицо человека с Фото 2 перенести без изменений, без искажений черт лица, без изменения формы головы и мимики. Сохранить естественные пропорции тела. Адаптировать цвет кожи, освещение и тени так, чтобы человек выглядел гармонично и реалистично в сцене. Не изменять стиль изображения. Без артефактов, без деформаций, без эффекта «пластика», максимально фотореалистично."
+},
   queen: {
     button: "👑 ЦАРИЦА",
     title: "ЦАРИЦА",
@@ -6315,10 +6315,11 @@ async function answerPhotoStylesMenu(callbackId, target) {
 }
 
 async function answerPhotoStyleActivated(callbackId, target, style) {
-  const text =
-    `🎨 **Стиль активирован: ${style.title}**\n\n` +
-    "Теперь просто отправьте фото.\n\n" +
-    "Если добавите текст к фото, он будет учтён как дополнительное пожелание.";
+const text =
+  `🎨 **Стиль активирован: ${style.title}**\n\n` +
+  (style.title === "🎎ЗАМЕНА ЧЕЛОВЕКА"
+    ? "Отправьте 2 фото:\n\nФото 1 — кого заменяем.\nФото 2 — кем заменяем.\n\nЖелательно отправлять фото четкие, с хорошо видимым лицом."
+    : "Теперь просто отправьте фото.\n\nЕсли добавите текст к фото, он будет учтён как дополнительное пожелание.");
 
   const attachments = [
     {
@@ -10048,19 +10049,23 @@ if (photoStyleModeActive) {
     styleImageOptions
   );
 
-  if (styleKey === "lemonade") {
-    clearUserPhotoStyle(userId);
-    setUserImageMode(userId, IMAGE_MODE_FAMILY_VIDEO);
+if (styleKey === "lemonade") {
+  clearUserPhotoStyle(userId);
+  clearUserImageMode(userId);
 
-    await sendMaxMessage(
-      target,
-      [
-        "🔥 **Фото для тренда готово.**",
-        "",
-        "Теперь отправьте это готовое фото сюда ещё раз, и бот создаст видео **«ТРЕНД МЕСЯЦА»** через **KLING**."
-      ].join("\n")
-    );
-  }
+  await sendMaxMessage(
+    target,
+    [
+      "✅ **Замена готова.**",
+      "",
+      "Если нужно сделать ещё одну замену, снова нажмите **Создать фото бесплатно** → **СТИЛИ** → **🔄 ЗАМЕНА**.",
+      "",
+      "Напоминание:",
+      "Фото 1 — кого заменяем.",
+      "Фото 2 — кем заменяем."
+    ].join("\n")
+  );
+}
 
   await status.stop();
   status = null;
