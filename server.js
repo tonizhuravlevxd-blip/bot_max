@@ -364,6 +364,55 @@ function shouldRegisterBotUser(userId) {
 const userImageModes = new Map();
 const userPhotoStyles = new Map();
 
+const userReplacementDrafts = new Map();
+
+const REPLACEMENT_DRAFT_TTL_MS = Number(
+  process.env.REPLACEMENT_DRAFT_TTL_MS || 10 * 60_000
+);
+
+function getReplacementDraft(userId) {
+  const key = String(userId || "unknown");
+  const draft = userReplacementDrafts.get(key);
+
+  if (!draft) {
+    return {
+      images: [],
+      userText: "",
+      createdAt: Date.now()
+    };
+  }
+
+  if (Date.now() - Number(draft.createdAt || 0) > REPLACEMENT_DRAFT_TTL_MS) {
+    userReplacementDrafts.delete(key);
+
+    return {
+      images: [],
+      userText: "",
+      createdAt: Date.now()
+    };
+  }
+
+  return {
+    images: Array.isArray(draft.images) ? draft.images.filter(Boolean) : [],
+    userText: String(draft.userText || ""),
+    createdAt: Number(draft.createdAt || Date.now())
+  };
+}
+
+function setReplacementDraft(userId, images, userText = "") {
+  const key = String(userId || "unknown");
+
+  userReplacementDrafts.set(key, {
+    images: Array.isArray(images) ? images.filter(Boolean).slice(0, 2) : [],
+    userText: String(userText || "").trim(),
+    createdAt: Date.now()
+  });
+}
+
+function clearReplacementDraft(userId) {
+  userReplacementDrafts.delete(String(userId || "unknown"));
+}
+
 function setUserPhotoStyle(userId, styleKey) {
   const key = String(userId || "unknown");
 
@@ -494,6 +543,7 @@ function clearUserImageMode(userId) {
 
   userImageModes.delete(key);
   userPhotoStyles.delete(key);
+  userReplacementDrafts.delete(key);
 }
 
 function isRestorationMode(userId) {
@@ -7863,6 +7913,57 @@ async function editOpenAIImage(prompt, inputImage, options = {}) {
   return Buffer.from(imageBase64, "base64");
 }
 
+async function editOpenAIImageMultiple(prompt, inputImages, options = {}) {
+  const form = new FormData();
+
+  const model = options.model || OPENAI_IMAGE_MODEL;
+  const size = options.size || OPENAI_IMAGE_SIZE;
+  const quality = options.quality || OPENAI_IMAGE_QUALITY;
+  const outputFormat = options.output_format || OPENAI_IMAGE_OUTPUT_FORMAT;
+
+  form.append("model", model);
+  form.append("prompt", prompt);
+  form.append("size", size);
+  form.append("quality", quality);
+  form.append("output_format", outputFormat);
+
+  if (model.startsWith("dall-e")) {
+    form.append("response_format", "b64_json");
+  }
+
+  for (let index = 0; index < inputImages.length; index += 1) {
+    const inputImage = inputImages[index];
+
+    form.append(
+      "image[]",
+      new Blob([inputImage.buffer], { type: inputImage.mime || "image/png" }),
+      inputImage.filename || `input_${index + 1}.png`
+    );
+  }
+
+  const response = await fetch(`${OPENAI_API_BASE}/images/edits`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${OPENAI_API_KEY}`
+    },
+    body: form
+  });
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    throw new Error(`OpenAI multi image edit API ${response.status}: ${JSON.stringify(data)}`);
+  }
+
+  const imageBase64 = extractImageBase64(data);
+
+  if (!imageBase64) {
+    throw new Error("OpenAI multi image edit API did not return b64_json");
+  }
+
+  return Buffer.from(imageBase64, "base64");
+}
+
 function collectUrls(value, urls = []) {
   if (!value) return urls;
 
@@ -9150,6 +9251,102 @@ await maybeSendRandomNudgeAfterGeneration(target, userId);
 
 }
 
+async function handleReplacementImageRequest(
+  update,
+  target,
+  userText,
+  sourceImageUrl,
+  identityImageUrl,
+  userId = target.id,
+  captionOverride = "",
+  imageOptionsOverride = null
+) {
+  const prompt = String(userText || "").trim();
+
+  if (!prompt) {
+    await sendMaxMessage(
+      target,
+      "Пришлите 2 фото для замены человека.\n\nФото 1 — кого заменяем.\nФото 2 — кем заменяем."
+    );
+    return;
+  }
+
+  if (!sourceImageUrl || !identityImageUrl) {
+    await sendMaxMessage(
+      target,
+      "Для режима **ЗАМЕНА ЧЕЛОВЕКА** нужно 2 фото.\n\nФото 1 — кого заменяем.\nФото 2 — кем заменяем."
+    );
+    return;
+  }
+
+  const currentCounts = await getUserRequestCounts(userId);
+  const userLimits = await getUserDailyLimits(userId);
+
+  if (await isRequestLimitReached(userId, "images", userLimits.images)) {
+    await sendMaxMessage(
+      target,
+      userLimits.premium
+        ? "🥱Вы достигли **Premium-лимита** на сегодня: 10 фото. Приходите позже и продолжайте."
+        : "🥱Вы достигли лимита на создание **Шедевров** сегодня, приходите позже и продолжайте"
+    );
+    return;
+  }
+
+  if (await isSubscriptionRequiredForRequest(userId, "images")) {
+    await sendSubscriptionPrompt(
+      target,
+      userId,
+      `Вы уже создали ${IMAGE_REQUESTS_BEFORE_SUBSCRIPTION} фото бесплатно.`
+    );
+    return;
+  }
+
+  const isFirstImageEver = (currentCounts.images || 0) === 0;
+
+  await incrementRequestCount(userId, "images");
+
+  const sourceImage = await downloadIncomingImage(sourceImageUrl);
+  const identityImage = await downloadIncomingImage(identityImageUrl);
+
+  const baseImageOptions = userLimits.premium
+    ? {
+        model: PREMIUM_IMAGE_MODEL,
+        size: PREMIUM_IMAGE_SIZE,
+        quality: PREMIUM_IMAGE_QUALITY
+      }
+    : isFirstImageEver
+      ? {
+          model: FIRST_IMAGE_MODEL,
+          size: FIRST_IMAGE_SIZE,
+          quality: FIRST_IMAGE_QUALITY
+        }
+      : {};
+
+  const imageOptions =
+    imageOptionsOverride && typeof imageOptionsOverride === "object"
+      ? {
+          ...baseImageOptions,
+          ...imageOptionsOverride
+        }
+      : baseImageOptions;
+
+  const imageBuffer = await runImageOpenAI(() =>
+    editOpenAIImageMultiple(
+      prompt,
+      [sourceImage, identityImage],
+      imageOptions
+    )
+  );
+
+  await sendMaxImage(
+    target,
+    captionOverride || makeImageCaption(prompt, true),
+    imageBuffer
+  );
+
+  await maybeSendRandomNudgeAfterGeneration(target, userId);
+}
+
 async function handleProductCardRequest(update, target, userText, incomingImageUrl, userId = target.id) {
   const prompt = String(userText || "").trim();
 
@@ -10019,7 +10216,7 @@ if (callbackPayload === MENU_BACK_PAYLOAD) {
       return;
     }
 
-    const photoStyleModeActive = isPhotoStyleMode(userId);
+const photoStyleModeActive = isPhotoStyleMode(userId);
 
 if (photoStyleModeActive) {
   const styleKey = getUserPhotoStyle(userId);
@@ -10036,6 +10233,107 @@ if (photoStyleModeActive) {
     return;
   }
 
+  // Отдельная логика для режима ЗАМЕНА ЧЕЛОВЕКА
+  if (styleKey === "lemonade") {
+    const freshImageUrls = Array.isArray(incomingImageUrls)
+      ? incomingImageUrls.filter(Boolean)
+      : [];
+
+    const draft = getReplacementDraft(userId);
+    const savedImages = Array.isArray(draft.images) ? draft.images.filter(Boolean) : [];
+    const combinedImages = [...savedImages, ...freshImageUrls].filter(Boolean).slice(0, 2);
+
+    const replacementUserText =
+      String(userText || "").trim() ||
+      String(draft.userText || "").trim();
+
+    if (!combinedImages.length) {
+      await sendMaxMessage(
+        target,
+        [
+          `🎎 **Стиль активирован: ${style.title}**`,
+          "",
+          "Отправьте 2 фото:",
+          "",
+          "Фото 1 — кого заменяем.",
+          "Фото 2 — кем заменяем.",
+          "",
+          "Можно отправить 2 фото одним сообщением или по очереди."
+        ].join("\n")
+      );
+
+      return;
+    }
+
+    if (combinedImages.length < 2) {
+      setReplacementDraft(userId, combinedImages, replacementUserText);
+
+      await sendMaxMessage(
+        target,
+        [
+          "✅ **Фото 1 принято.**",
+          "",
+          "Теперь отправьте **Фото 2** — человека, на которого нужно заменить.",
+          "",
+          "Фото 1 — кого заменяем.",
+          "Фото 2 — кем заменяем."
+        ].join("\n")
+      );
+
+      return;
+    }
+
+    if (isUserBusy(userId)) {
+      await sendBusyWarningIfNeeded(target, userId, firstName);
+      return;
+    }
+
+    lockUserProcessing(userId);
+    processingLocked = true;
+
+    status = await startDynamicStatus(
+      target,
+      "Меняю человека на фото 🎎"
+    );
+
+    const stylePrompt = buildPhotoStylePrompt(styleKey, replacementUserText);
+    const styleImageOptions = getPhotoStyleImageOptions(styleKey);
+
+    await handleReplacementImageRequest(
+      update,
+      target,
+      stylePrompt,
+      combinedImages[0],
+      combinedImages[1],
+      userId,
+      `✅ Готово. Стиль: ${style.title}`,
+      styleImageOptions
+    );
+
+    clearReplacementDraft(userId);
+    clearUserPhotoStyle(userId);
+    clearUserImageMode(userId);
+
+    await sendMaxMessage(
+      target,
+      [
+        "✅ **Замена готова.**",
+        "",
+        "Если нужно сделать ещё одну замену, снова нажмите **Создать фото бесплатно** → **СТИЛИ** → **🎎 ЗАМЕНА**.",
+        "",
+        "Напоминание:",
+        "Фото 1 — кого заменяем.",
+        "Фото 2 — кем заменяем."
+      ].join("\n")
+    );
+
+    await status.stop();
+    status = null;
+
+    return;
+  }
+
+  // Обычные стили работают по старой логике с одним фото
   if (!incomingImageUrl) {
     await sendMaxMessage(
       target,
@@ -10071,29 +10369,12 @@ if (photoStyleModeActive) {
     styleImageOptions
   );
 
-if (styleKey === "lemonade") {
-  clearUserPhotoStyle(userId);
-  clearUserImageMode(userId);
-
-  await sendMaxMessage(
-    target,
-    [
-      "✅ **Замена готова.**",
-      "",
-      "Если нужно сделать ещё одну замену, снова нажмите **Создать фото бесплатно** → **СТИЛИ** → **🔄 ЗАМЕНА**.",
-      "",
-      "Напоминание:",
-      "Фото 1 — кого заменяем.",
-      "Фото 2 — кем заменяем."
-    ].join("\n")
-  );
-}
-
   await status.stop();
   status = null;
 
   return;
 }
+
 
 const productCardModeActive = isProductCardMode(userId);
 
