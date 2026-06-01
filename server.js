@@ -214,6 +214,30 @@ const MENU_CREATE_PHOTO_PAYLOAD = "menu_create_photo";
 const MENU_PHOTO_STYLES_PAYLOAD = "menu_photo_styles";
 const PHOTO_STYLE_PAYLOAD_PREFIX = "photo_style:";
 const IMAGE_MODE_PHOTO_STYLE = "photo_style";
+const PHOTO_FORMAT_PAYLOAD_PREFIX = "photo_format:";
+const DEFAULT_PHOTO_FORMAT = "square";
+
+const PHOTO_FORMATS = {
+  square: {
+    button: "⬜ 1:1",
+    title: "1:1",
+    promptSuffix:
+      "Composition format: square 1:1 image, centered framing, balanced composition, keep the main subject clearly visible."
+  },
+  phone: {
+    button: "📱",
+    title: "Телефон",
+    promptSuffix:
+      "Composition format: vertical smartphone-style composition inside a square canvas. The image should feel suitable for a phone screen or story/post format. Keep the main subject centered with safe margins, do not crop the face, hands, important objects or text."
+  },
+  desktop: {
+    button: "💻",
+    title: "Компьютер 16:9",
+    promptSuffix:
+      "Composition format: wide horizontal 16:9 desktop-style composition inside a square canvas. The scene should feel cinematic and wide, with horizontal framing, safe margins, and no cropped important details."
+  }
+};
+
 const MENU_CREATE_VIDEO_PAYLOAD = "menu_create_video";
 const MENU_CREATE_PROMPT_VIDEO_PAYLOAD = "menu_create_prompt_video";
 const MENU_CREATE_FAMILY_VIDEO_PAYLOAD = "menu_create_family_video";
@@ -363,6 +387,7 @@ function shouldRegisterBotUser(userId) {
 
 const userImageModes = new Map();
 const userPhotoStyles = new Map();
+const userPhotoFormats = new Map();
 
 const userReplacementDrafts = new Map();
 
@@ -413,6 +438,52 @@ function clearReplacementDraft(userId) {
   userReplacementDrafts.delete(String(userId || "unknown"));
 }
 
+function setUserPhotoFormat(userId, formatKey) {
+  const key = String(userId || "unknown");
+  const cleanFormatKey = String(formatKey || "").trim();
+
+  if (!PHOTO_FORMATS[cleanFormatKey]) {
+    userPhotoFormats.set(key, DEFAULT_PHOTO_FORMAT);
+    return DEFAULT_PHOTO_FORMAT;
+  }
+
+  userPhotoFormats.set(key, cleanFormatKey);
+  return cleanFormatKey;
+}
+
+function getUserPhotoFormat(userId) {
+  const key = String(userId || "unknown");
+  const formatKey = userPhotoFormats.get(key) || DEFAULT_PHOTO_FORMAT;
+
+  return PHOTO_FORMATS[formatKey] ? formatKey : DEFAULT_PHOTO_FORMAT;
+}
+
+function clearUserPhotoFormat(userId) {
+  userPhotoFormats.delete(String(userId || "unknown"));
+}
+
+function buildPromptWithPhotoFormat(userText, userId) {
+  const cleanText = String(userText || "").trim();
+
+  if (!cleanText) {
+    return "";
+  }
+
+  const formatKey = getUserPhotoFormat(userId);
+  const format = PHOTO_FORMATS[formatKey];
+
+  if (!format?.promptSuffix) {
+    return cleanText;
+  }
+
+  return [
+    cleanText,
+    "",
+    "Selected image format instruction:",
+    format.promptSuffix
+  ].join("\n");
+}
+
 function setUserPhotoStyle(userId, styleKey) {
   const key = String(userId || "unknown");
 
@@ -422,6 +493,7 @@ function setUserPhotoStyle(userId, styleKey) {
   }
 
   userPhotoStyles.set(key, styleKey);
+  clearUserPhotoFormat(userId);
   setUserImageMode(userId, IMAGE_MODE_PHOTO_STYLE);
 }
 
@@ -544,6 +616,7 @@ function clearUserImageMode(userId) {
   userImageModes.delete(key);
   userPhotoStyles.delete(key);
   userReplacementDrafts.delete(key);
+  userPhotoFormats.delete(key);
 }
 
 function isRestorationMode(userId) {
@@ -6273,7 +6346,15 @@ async function sendCashAdminReport(target, adminUserId) {
 }
 
 
-function buildCreatePhotoKeyboard() {
+function buildCreatePhotoKeyboard(userId = null) {
+  const selectedFormat = getUserPhotoFormat(userId);
+
+  const formatButton = (formatKey) => ({
+    type: "callback",
+    text: `${selectedFormat === formatKey ? "✅ " : ""}${PHOTO_FORMATS[formatKey].button}`,
+    payload: `${PHOTO_FORMAT_PAYLOAD_PREFIX}${formatKey}`
+  });
+
   return [
     [
       {
@@ -6281,6 +6362,13 @@ function buildCreatePhotoKeyboard() {
         text: "🌌 СТИЛИ",
         payload: MENU_PHOTO_STYLES_PAYLOAD
       }
+    ],
+    [
+      formatButton("square"),
+      formatButton("phone")
+    ],
+    [
+      formatButton("desktop")
     ],
     [
       {
@@ -6327,19 +6415,19 @@ async function answerMainMenu(callbackId, target, prefixText = "") {
   return sendMainMenu(target, prefixText);
 }
 
-async function sendCreatePhotoHelp(target) {
+async function sendCreatePhotoHelp(target, userId = target.id) {
   const text =
     "📸 **Создать фото Бесплатно**\n\n" +
     "Отправь:\n" +
     "• фото + промт (что изменить/добавить)\n" +
     "или\n" +
-    "• просто промт с текстом вида: `создай фото/картинку ...`";
+    "• просто промт с текстом вида: `создай фото/картинку .`";
 
   const attachments = [
     {
       type: "inline_keyboard",
       payload: {
-        buttons: buildCreatePhotoKeyboard()
+        buttons: buildCreatePhotoKeyboard(userId)
       }
     }
   ];
@@ -6347,7 +6435,7 @@ async function sendCreatePhotoHelp(target) {
   return sendMaxMessageWithAttachments(target, text, attachments);
 }
 
-async function answerCreatePhotoHelp(callbackId, target) {
+async function answerCreatePhotoHelp(callbackId, target, userId = target.id) {
 const text =
   "📸 **Создать фото Бесплатно**\n\n" +
   "Отправь:\n" +
@@ -6359,7 +6447,29 @@ const text =
     {
       type: "inline_keyboard",
       payload: {
-        buttons: buildCreatePhotoKeyboard()
+        buttons: buildCreatePhotoKeyboard(userId)
+      }
+    }
+  ];
+
+  return answerMaxCallbackWithMessage(callbackId, target, text, attachments);
+}
+
+async function answerPhotoFormatSelected(callbackId, target, userId, formatKey) {
+  const selectedFormatKey = setUserPhotoFormat(userId, formatKey);
+  const format = PHOTO_FORMATS[selectedFormatKey];
+
+  const text =
+    "📸 **Создать фото Бесплатно**\n\n" +
+    `Выбран формат: **${format.title}**\n\n` +
+    "Теперь отправь промт или фото + промт.\n\n" +
+    "Важно: технический размер генерации не меняется. Формат только дописывается в промт.";
+
+  const attachments = [
+    {
+      type: "inline_keyboard",
+      payload: {
+        buttons: buildCreatePhotoKeyboard(userId)
       }
     }
   ];
@@ -9165,15 +9275,24 @@ ${angle.instruction}
 }
 
 async function handleImageRequest(update, target, userText, incomingImageUrl, userId = target.id, captionOverride = "", imageOptionsOverride = null) {
-  const prompt = String(userText || "").trim();
+  const rawPrompt = String(userText || "").trim();
 
-  if (!prompt) {
+  if (!rawPrompt) {
     await sendMaxMessage(
       target,
       "Пришлите описание изображения. Например: создай фото кота в космосе, кинематографичный стиль."
     );
     return;
   }
+
+  const shouldApplyPhotoFormat =
+    !getUserImageMode(userId) &&
+    !captionOverride &&
+    !imageOptionsOverride;
+
+const prompt = shouldApplyPhotoFormat
+    ? buildPromptWithPhotoFormat(rawPrompt, userId)
+    : rawPrompt;
 
   // Берём текущие лимиты пользователя из БД (или памяти)
   const currentCounts = await getUserRequestCounts(userId);
@@ -9241,7 +9360,7 @@ async function handleImageRequest(update, target, userText, incomingImageUrl, us
 
   await sendMaxImage(
   target,
-  captionOverride || makeImageCaption(prompt, Boolean(inputImage)),
+  captionOverride || makeImageCaption(rawPrompt, Boolean(inputImage)),
   imageBuffer
 );
 
@@ -9900,8 +10019,19 @@ if (isCallbackUpdate) {
 if (callbackPayload === MENU_CREATE_PHOTO_PAYLOAD) {
   clearUserImageMode(userId);
 
-  answerCreatePhotoHelp(callbackId, target).catch((error) => {
+  answerCreatePhotoHelp(callbackId, target, userId).catch((error) => {
     console.error("answerCreatePhotoHelp failed:", error?.message || error);
+  });
+
+  return;
+}
+
+  // 2.1) Выбор формата фото
+if (String(callbackPayload || "").startsWith(PHOTO_FORMAT_PAYLOAD_PREFIX)) {
+  const formatKey = String(callbackPayload || "").slice(PHOTO_FORMAT_PAYLOAD_PREFIX.length);
+
+  answerPhotoFormatSelected(callbackId, target, userId, formatKey).catch((error) => {
+    console.error("answerPhotoFormatSelected failed:", error?.message || error);
   });
 
   return;
