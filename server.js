@@ -397,6 +397,28 @@ function buildPhotoStylePrompt(styleKey, userText = "") {
 
   const extraUserText = String(userText || "").trim();
 
+  if (styleKey === "lemonade") {
+    return `
+Use the uploaded images as references.
+
+Selected mode:
+${style.prompt}
+
+User extra wishes:
+${extraUserText || "No extra wishes."}
+
+Strict requirements for person replacement:
+- Photo 1 is the source scene: keep the original background, lighting, perspective, pose, composition, camera angle and image style;
+- Photo 2 is the identity reference: replace the person in Photo 1 with the person from Photo 2;
+- preserve the face from Photo 2 exactly, without changing facial features, head shape, expression, age or identity;
+- keep natural body proportions and realistic anatomy;
+- adapt skin tone, shadows, lighting and color grading so the new person fits naturally into the original scene;
+- do not change the background or overall style of Photo 1;
+- no artifacts, no deformations, no plastic skin, no face morphing, no extra fingers, no broken hands;
+- final result must be maximally photorealistic.
+`.trim();
+  }
+
   return `
 Use the input photo as the main reference.
 
