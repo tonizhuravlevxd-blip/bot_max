@@ -37,8 +37,8 @@ const YOOKASSA_TAX_SYSTEM_CODE = process.env.YOOKASSA_TAX_SYSTEM_CODE
   ? Number(process.env.YOOKASSA_TAX_SYSTEM_CODE)
   : undefined;
 
-const PREMIUM_IMAGE_REQUEST_LIMIT = Number(process.env.PREMIUM_IMAGE_REQUEST_LIMIT || 10);
-const PREMIUM_CHATGPT_REQUEST_LIMIT = Number(process.env.PREMIUM_CHATGPT_REQUEST_LIMIT || 16);
+const PREMIUM_IMAGE_REQUEST_LIMIT = Number(process.env.PREMIUM_IMAGE_REQUEST_LIMIT || 20);
+const PREMIUM_CHATGPT_REQUEST_LIMIT = Number(process.env.PREMIUM_CHATGPT_REQUEST_LIMIT || 20);
 // Ежедневный Premium-лимит для «оживить фото / видео по фото».
 // Это НЕ бонусный накопительный кредит: лимит обновляется каждый день.
 const PREMIUM_VIDEO_REQUEST_LIMIT = Number(process.env.PREMIUM_VIDEO_REQUEST_LIMIT || 1);
@@ -2934,7 +2934,6 @@ const RANDOM_NUDGE_MESSAGES = [
 
   "🎁 Спасибо, что пользуешься ботом. Вот **[СТИКЕРЫ](https://max.ru/stickerset/H-ZRhj8Ho-gSEXFkiTwVJqOpforgF83w7wyGrDq47VI)**",
 
-  "🎮 **Оживляй фото с Алисой AI** 🎭 **Умная Алиса ждет свой запрос**[БЕСПЛАТНО](https://redirect.appmetrica.yandex.com/serve/750435175153844646?clid=15053682&appmetrica_js_redirect=0)",
 
   "🚀 **Хочешь больше продаж на Wildberries и Ozon?** 📈 **MarketAI24** покажет, где ты теряешь *деньги* и как увеличить прибыль с помощью AI-аналитики. 🔥 Попробуй **[БЕСПЛАТНО](https://marketai24.ru/?ref=5ZFAWMVO)**",
 
@@ -2942,11 +2941,11 @@ const RANDOM_NUDGE_MESSAGES = [
 
   "✨ Хочешь результат лучше? Проси прямо в **ЧАТ** чтобы написали промт за тебя и **создавай фото**",
 
-  "🤖 Спасибо, что создаёшь вместе с ботом. Ты теперь нам как **семья**👨‍👨‍👦‍👦",
+  "🧸 Спасибо, что создаёшь вместе с ботом. Ты теперь нам как **семья**👨‍👨‍👦‍👦",
 
   "🤸‍♂️**Кстати вы знали что в Алисе от Яндекса можно оживлять фото и спросить что хочешь?**[БЕСПЛАТНО](https://redirect.appmetrica.yandex.com/serve/750435175153844646?clid=15053682&appmetrica_js_redirect=0)",
 
-  "🗣️ **Твои лимиты обновляются каждый день,всегда тебя ждем**",
+  "⏳ **Твои лимиты обновляются каждый день,всегда тебя ждем**",
 
   "❗ *Если есть проблемы с ботом или хотите стать **спонсором/реклама**, пишите в* **[Поддержку](https://max.ru/u/f9LHodD0cOK-A0lZdI24jE547UNSp4Gdn57gyHn8TJVc5hh-0NCZiBCjktg)**."
 ].filter(Boolean);
@@ -6970,15 +6969,14 @@ async function sendPremiumInfo(target, userId) {
     "*Что дает Премиум?*\n\n" +
     `**1️⃣ ${PREMIUM_IMAGE_REQUEST_LIMIT} фото в день с лучшей моделью.**\n` +
     `**2️⃣ ChatGPT ${PREMIUM_CHATGPT_REQUEST_LIMIT} запросов в день.**\n` +
-    `**3️⃣ Оживить фото / видео по фото: ${PREMIUM_VIDEO_REQUEST_LIMIT} раз в день.**\n` +
-    "**4️⃣ Ежедневный персональный гороскоп по выбранному времени.**\n" +
+    `**3️⃣ Оживить фото: ${PREMIUM_VIDEO_REQUEST_LIMIT} раз в день.**\n` +
+    "**4️⃣ Ежедневный персональный гороскоп по выбранному времени.🧿**\n" +
     "**5️⃣ Уйдет обязательная подписка на каналы.**\n" +
-    "**6️⃣ ГОРОСКОП🧿.**\n" +
-    "**7️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
+    "**6️⃣ Бонусные кредиты при каждой покупке Premium:**\n" +
     `•🎥создать видео: **+${PREMIUM_BONUS_PROMPT_VIDEO_CREDITS}**;\n` +
     `•🛍️создать карточку товара: **+${PREMIUM_BONUS_PRODUCT_CARD_CREDITS}**;\n` +
     `•🎶создать музыку: **+${PREMIUM_BONUS_MUSIC_CREDITS}**.\n\n` +
-    "Кредиты **суммируются** при повторной покупке Premium. Если кредиты закончились — нужно купить Premium ещё раз.\n\n" +
+    "Кредиты за 🎥🎶🛍️ **суммируются** при повторной покупке Premium.\n\n" +
     "**Ваши текущие кредиты:**\n" +
     `• создать видео: **${promptVideoCredits}**;\n` +
     `• карточка товара: **${productCardCredits}**;\n` +
