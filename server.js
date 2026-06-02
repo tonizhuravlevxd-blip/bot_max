@@ -6365,10 +6365,8 @@ function buildCreatePhotoKeyboard(userId = null) {
     ],
     [
       formatButton("square"),
-      formatButton("phone")
-    ],
-    [
-      formatButton("desktop")
+      formatButton("phone"),
+      formatButton("desktop")  // теперь все три кнопки в одной линии
     ],
     [
       {
@@ -6462,8 +6460,7 @@ async function answerPhotoFormatSelected(callbackId, target, userId, formatKey) 
   const text =
     "📸 **Создать фото Бесплатно**\n\n" +
     `Выбран формат: **${format.title}**\n\n` +
-    "Теперь отправь промт или фото + промт.\n\n" +
-    "Важно: технический размер генерации не меняется. Формат только дописывается в промт.";
+    "Теперь отправь промт или фото + промт.";
 
   const attachments = [
     {
