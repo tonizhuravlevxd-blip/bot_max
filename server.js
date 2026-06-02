@@ -339,12 +339,12 @@ lemonade: {
     prompt:
       "Transform the uploaded photo into a high-quality ROBLOX-style 3D avatar. Preserve the person’s main facial features, hairstyle, outfit, skin tone, and expression, but recreate them as a polished blocky ROBLOX character. Full-body view, clean studio background, premium game-avatar render, smooth plastic-like materials, sharp details, soft lighting, 4K quality. Avoid realism, anime, Pixar style, distorted face, bad proportions, or cropped body."
   },
+  restoration: {
+    button: "🛠️ Реставрация",
+    title: "Реставрация",
+    prompt: RESTORATION_PROMPT
+  }
 
-  PHOTO_STYLES.restoration = {
-  button: "🛠️ Реставрация",
-  title: "Реставрация",
-  prompt: RESTORATION_PROMPT // в твоём коде уже есть переменная с инструкциями для реставрации
-}
 };
 
 const RESTORATION_PROMPT = `Реставрируй старую фотографию максимально аккуратно и реалистично.
