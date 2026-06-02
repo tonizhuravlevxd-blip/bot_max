@@ -7237,25 +7237,18 @@ async function sendProductCardInfo(target, userId) {
 async function sendSubscriptionPrompt(target, userId, prefixText = "") {
   const text =
     `${prefixText ? `${prefixText}\n\n` : ""}` +
-    "🔒 **Чтобы продолжить пользоваться ботом бесплатно НАВСЕГДА, подпишитесь на ОБЯЗАТЕЛЬНЫЕ каналы внизу👇 и нажмите кнопку Я подписан(а)**.";
+    "🔒 **Чтобы продолжить пользоваться ботом бесплатно, подпишитесь на каналы ниже и нажмите кнопку Я подписан(а)**.";
 
-  // userId кладём в payload, чтобы по нему потом проверять
   const checkPayload = `${SUBSCRIPTION_CHECK_PAYLOAD}:${userId}`;
 
-  // Генерация кнопок с индикаторами подписки для каждого канала
-  const subscribeButtons = await Promise.all(
-    REQUIRED_CHANNELS.map(async (channel, index) => {
-      const isSubscribed = await checkSingleRequiredChannelSubscription(userId, channel);
-
-      return [
-        {
-          type: "link",
-          text: `${isSubscribed ? "✅" : "❌"} Подписаться на ${channel.title || `канал ${index + 1}`}`,
-          url: channel.url
-        }
-      ];
-    })
-  );
+  // Просто показываем каналы, без индикатора подписки
+  const subscribeButtons = REQUIRED_CHANNELS.map((channel, index) => [
+    {
+      type: "link",
+      text: `📢 Подписаться на ${channel.title || `канал ${index + 1}`}`,
+      url: channel.url
+    }
+  ]);
 
   const buttons = [
     ...subscribeButtons,
@@ -7268,37 +7261,9 @@ async function sendSubscriptionPrompt(target, userId, prefixText = "") {
     ]
   ];
 
-  const attachments = [
-    {
-      type: "inline_keyboard",
-      payload: {
-        buttons
-      }
-    }
-  ];
-
-  try {
-    await sendMaxMessageWithAttachments(target, text, attachments);
-  } catch (error) {
-    console.warn(
-      "Не удалось отправить кнопки подписки, отправляем текст:",
-      error?.message || error
-    );
-
-    const channelsText = REQUIRED_CHANNELS
-      .map((channel, index) => {
-        const title = channel.title || `канал ${index + 1}`;
-        return channel.url
-          ? `📢 ${title}: ${channel.url}`
-          : `📢 ${title}: ссылка не указана`;
-      })
-      .join("\n");
-
-    await sendMaxMessage(
-      target,
-      `${text}\n\n${channelsText}\n\nПосле подписки отправьте команду: /проверить`
-    );
-  }
+  await sendMaxMessageWithAttachments(target, text, [
+    { type: "inline_keyboard", payload: { buttons } }
+  ]);
 }
 
 
