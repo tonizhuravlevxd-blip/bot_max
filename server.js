@@ -7931,6 +7931,7 @@ function buildImageJsonBody(prompt, options = {}) {
 }
 
 const SOFT_IMAGE_PROMPT_REPLACEMENTS = [
+  // базовые сексуальные триггеры
   [/без\s+лифчика/giu, "без видимых бретелей"],
   [/без\s+бюстгальтера/giu, "без видимых бретелей"],
   [/\bлифчик\b/giu, "топ"],
@@ -7945,7 +7946,56 @@ const SOFT_IMAGE_PROMPT_REPLACEMENTS = [
   [/\bсексуальн\w*\b/giu, "элегантный"],
   [/\bsex(y)?\b/giu, "stylish"],
   [/нижн\w+\s+бель[её]/giu, "домашняя одежда"],
-  [/\bв белье\b/giu, "в домашнем образе"]
+  [/\bв белье\b/giu, "в домашнем образе"],
+  
+  // дополнения для vintage, collage, portrait и модных промтов
+  [/tight white cropped t-shirt/giu, "светлый топ с мягкой тканью"],
+  [/lifting the shirt/giu, "слегка поправляет одежду"],
+  [/arms raised above the head/giu, "руки подняты в расслабленной позе"],
+  [/glamorous woman/giu, "женщина в стильном образе"],
+  [/candid poses/giu, "естественные позы"],
+  [/confident feminine energy/giu, "уверенная поза и выражение"],
+  [/long voluminous hair/giu, "длинные мягкие волосы"],
+  [/full makeup/giu, "аккуратный макияж"],
+  [/nude lips/giu, "естественные губы"],
+  [/defined eyes/giu, "выразительные глаза"],
+  [/contour/giu, "легкая контурировка"],
+  [/glowing skin/giu, "естественная кожа"],
+  [/soft flash photography/giu, "мягкая студийная вспышка"],
+  [/faded analog texture/giu, "легкая винтажная текстура"],
+  [/dusty vintage effect/giu, "пыльный ретро-эффект"],
+  [/early 2000s aesthetic/giu, "стиль начала 2000-х"],
+  [/realistic body proportions/giu, "естественные пропорции тела"],
+  [/visible pores/giu, "видимая текстура кожи"],
+  [/natural skin texture/giu, "естественная текстура кожи"],
+  [/cinematic direct flash lighting/giu, "кинематографичное освещение"],
+  [/authentic retro photo booth vibe/giu, "аутентичный ретро-стиль"],
+  [/shot on iPhone \d+/giu, "съемка на смартфон"],
+  [/film effect overlay/giu, "эффект пленки"],
+  [/tight\s*tank top/giu, "топ из мягкой ткани"],
+  [/form-fitting/giu, "естественно сидящая одежда"],
+  [/slightly lifting shirt/giu, "слегка поправляет одежду"],
+  [/exposed midriff/giu, "с естественным силуэтом"],
+  [/reveal(ing)?/giu, "показывает одежду"],
+  [/lingerie/giu, "домашний топ"],
+  [/underwear/giu, "топ"],
+  [/panties/giu, "нижняя часть одежды без откровенности"],
+  [/bra/giu, "топ"],
+  [/bare shoulders/giu, "с открытыми плечами, но в одежде"],
+  [/bare legs/giu, "естественные ноги в одежде или колготках"],
+  [/thong/giu, "нижняя часть одежды"],
+  [/cleavage/giu, "декоративный вырез топа"],
+  [/revealing outfit/giu, "легкий образ одежды"],
+  [/exposed skin/giu, "естественная кожа, закрытая одеждой"],
+  [/erotic pose/giu, "стильная поза"],
+  [/seductive/giu, "элегантная"],
+  [/sexually suggestive/giu, "стильный образ"],
+  [/explicit/giu, "нейтральный стиль"],
+  [/nsfw/giu, "suitable for work"],
+  [/porn/giu, "без откровенности"],
+  [/nude/giu, "в одежде"],
+  [/nipples?/giu, "детали одежды"],
+  [/cleavage/giu, "топ с вырезом"]
 ];
 
 const HARD_BLOCK_IMAGE_PATTERNS = [
