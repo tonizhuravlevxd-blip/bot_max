@@ -20,7 +20,7 @@ function debugLog(...args) {
   }
 }
 
-const IMAGE_REQUEST_LIMIT = 3; 
+const IMAGE_REQUEST_LIMIT = 4; 
 const CHATGPT_REQUEST_LIMIT = 8;
 const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
 const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
@@ -221,7 +221,7 @@ const PHOTO_FORMATS = {
   square: {
     button: "⬜ 1:1",
     title: "1:1",
-    size: "1024x1024",
+    size: "1024x1536",
     promptSuffix:
       "Composition format: square 1:1 image. Centered framing, balanced composition, keep the main subject fully visible, avoid cropping faces, hands, text, logos or important objects."
   },
@@ -3752,8 +3752,8 @@ function resetDailyLimits() {
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
 
 // Базовая модель для обычной генерации фото
-const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
-const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5";
+const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1536";
 const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
 const OPENAI_IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
 
