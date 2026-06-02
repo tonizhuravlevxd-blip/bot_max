@@ -7930,6 +7930,161 @@ function buildImageJsonBody(prompt, options = {}) {
   return body;
 }
 
+const SOFT_IMAGE_PROMPT_REPLACEMENTS = [
+  [/без\s+лифчика/giu, "без видимых бретелей"],
+  [/без\s+бюстгальтера/giu, "без видимых бретелей"],
+  [/\bлифчик\b/giu, "топ"],
+  [/\bбюстгальтер\b/giu, "топ"],
+  [/прозрачн\w*\s+(топ|одежд\w*)/giu, "легкая ткань без откровенности"],
+  [/\bсоски\b/giu, "детали одежды"],
+  [/\bгол(ая|ый|ое|ые)\b/giu, "в одежде"],
+  [/обнаж(енн|ённ)\w*/giu, "в одежде"],
+  [/\bню\b/giu, "портрет"],
+  [/\bэротич\w*\b/giu, "стильный"],
+  [/\bэротик\w*\b/giu, "стильный"],
+  [/\bсексуальн\w*\b/giu, "элегантный"],
+  [/\bsex(y)?\b/giu, "stylish"],
+  [/нижн\w+\s+бель[её]/giu, "домашняя одежда"],
+  [/\bв белье\b/giu, "в домашнем образе"]
+];
+
+const HARD_BLOCK_IMAGE_PATTERNS = [
+  /\b(porn|porno|порно|nsfw|xxx)\b/iu,
+  /\b(секс|минет|орал\w*|анальн\w*|мастурб\w*|фетиш\w*)\b/iu,
+  /\b(реб[её]нок|дети|детский|школьниц\w*|несовершеннолет\w*|teen)\b.*\b(гол\w*|обнаж\w*|эрот\w*|сексу\w*)\b/iu
+];
+
+function normalizePromptText(value) {
+  return String(value || "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function isOpenAIImageModerationError(error) {
+  const message = String(error?.message || error || "");
+  return /moderation_blocked|safety_violations|rejected by the safety system|content_policy|blocked by safety/i.test(message);
+}
+
+function createSoftModerationBlockedError() {
+  const error = new Error("image_prompt_soft_blocked");
+  error.userMessage = [
+    "📲 **Не получилось создать фото:** запрос слишком откровенный или содержит спорные формулировки.",
+    "",
+    "Попробуйте описать задачу нейтрально:",
+    "• вместо откровенности — стиль, ткань, фасон;",
+    "• вместо белья — топ, платье, образ;",
+    "• без сексуального акцента."
+  ].join("\n");
+  return error;
+}
+
+function softenImagePrompt(rawPrompt, { strict = false } = {}) {
+  const original = normalizePromptText(rawPrompt);
+
+  if (!original) {
+    return {
+      prompt: "",
+      changed: false,
+      blocked: false
+    };
+  }
+
+  // Сначала проверяем жёстко запрещённые случаи
+  const blocked = HARD_BLOCK_IMAGE_PATTERNS.some((pattern) => pattern.test(original));
+
+  let softened = original;
+  let changed = false;
+
+  for (const [pattern, replacement] of SOFT_IMAGE_PROMPT_REPLACEMENTS) {
+    const next = softened.replace(pattern, replacement);
+    if (next !== softened) {
+      changed = true;
+      softened = next;
+    }
+  }
+
+  softened = normalizePromptText(softened);
+
+  const safetySuffix = strict
+    ? "Important safety requirements: keep the result safe-for-work, non-explicit, fully clothed, no nudity, no underwear focus, no erotic posing, no fetish elements."
+    : "Safety requirements: keep the result safe-for-work, non-explicit and without nudity or erotic emphasis.";
+
+  const finalPrompt = `${softened}\n\n${safetySuffix}`.trim();
+
+  debugLog("softenImagePrompt:", {
+    strict,
+    changed,
+    original,
+    finalPrompt
+  });
+
+  return {
+    prompt: finalPrompt,
+    changed,
+    blocked
+  };
+}
+
+async function generateImageWithSoftModeration({
+  rawPrompt,
+  inputImage = null,
+  inputImages = null,
+  imageOptions = {}
+}) {
+  const firstAttempt = softenImagePrompt(rawPrompt, { strict: false });
+
+  if (firstAttempt.blocked) {
+    throw createSoftModerationBlockedError();
+  }
+
+  try {
+    if (Array.isArray(inputImages) && inputImages.length > 0) {
+      return await runImageOpenAI(() =>
+        editOpenAIImageMultiple(firstAttempt.prompt, inputImages, imageOptions)
+      );
+    }
+
+    if (inputImage) {
+      return await runImageOpenAI(() =>
+        editOpenAIImage(firstAttempt.prompt, inputImage, imageOptions)
+      );
+    }
+
+    return await runImageOpenAI(() =>
+      generateOpenAIImage(firstAttempt.prompt, imageOptions)
+    );
+  } catch (error) {
+    if (!isOpenAIImageModerationError(error)) {
+      throw error;
+    }
+
+    // Если OpenAI всё равно заблокировал — пробуем ещё раз с более строгим смягчением
+    const secondAttempt = softenImagePrompt(rawPrompt, { strict: true });
+
+    if (secondAttempt.blocked || secondAttempt.prompt === firstAttempt.prompt) {
+      throw error;
+    }
+
+    debugLog("Retrying image generation with stricter softened prompt");
+
+    if (Array.isArray(inputImages) && inputImages.length > 0) {
+      return await runImageOpenAI(() =>
+        editOpenAIImageMultiple(secondAttempt.prompt, inputImages, imageOptions)
+      );
+    }
+
+    if (inputImage) {
+      return await runImageOpenAI(() =>
+        editOpenAIImage(secondAttempt.prompt, inputImage, imageOptions)
+      );
+    }
+
+    return await runImageOpenAI(() =>
+      generateOpenAIImage(secondAttempt.prompt, imageOptions)
+    );
+  }
+}
+
 
 
 async function generateOpenAIImage(prompt, options = {}) {
@@ -9338,12 +9493,11 @@ const imageOptions = {
     : {})
 };
 
-  const imageBuffer = await runImageOpenAI(() =>
-    inputImage
-      ? editOpenAIImage(prompt, inputImage, imageOptions)
-      : generateOpenAIImage(prompt, imageOptions)
-  );
-
+const imageBuffer = await generateImageWithSoftModeration({
+  rawPrompt: prompt,
+  inputImage,
+  imageOptions
+});
   await sendMaxImage(
   target,
   captionOverride || makeImageCaption(rawPrompt, Boolean(inputImage)),
@@ -9433,13 +9587,11 @@ async function handleReplacementImageRequest(
         }
       : baseImageOptions;
 
-  const imageBuffer = await runImageOpenAI(() =>
-    editOpenAIImageMultiple(
-      prompt,
-      [sourceImage, identityImage],
-      imageOptions
-    )
-  );
+const imageBuffer = await generateImageWithSoftModeration({
+  rawPrompt: prompt,
+  inputImages: [sourceImage, identityImage],
+  imageOptions
+});
 
   await sendMaxImage(
     target,
