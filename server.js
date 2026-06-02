@@ -221,20 +221,23 @@ const PHOTO_FORMATS = {
   square: {
     button: "⬜ 1:1",
     title: "1:1",
+    size: "1024x1024",
     promptSuffix:
-      "Composition format: square 1:1 image, centered framing, balanced composition, keep the main subject clearly visible."
+      "Composition format: square 1:1 image. Centered framing, balanced composition, keep the main subject fully visible, avoid cropping faces, hands, text, logos or important objects."
   },
   phone: {
     button: "📱",
     title: "Телефон",
+    size: "1024x1536",
     promptSuffix:
-      "Composition format: vertical smartphone-style composition inside a square canvas. The image should feel suitable for a phone screen or story/post format. Keep the main subject centered with safe margins, do not crop the face, hands, important objects or text."
+      "Composition format: vertical portrait smartphone image. Full-height composition, keep the main subject fully visible, avoid cropping head, legs, hands, clothing, text, logos or important objects. Suitable for phone screen, stories and vertical posts."
   },
   desktop: {
     button: "💻",
     title: "Компьютер 16:9",
+    size: "1536x1024",
     promptSuffix:
-      "Composition format: wide horizontal 16:9 desktop-style composition inside a square canvas. The scene should feel cinematic and wide, with horizontal framing, safe margins, and no cropped important details."
+      "Composition format: wide horizontal desktop image. Cinematic landscape framing, keep the main subject and important details fully visible, avoid cropping faces, hands, text, logos or key objects. Suitable for desktop screen and wide posts."
   }
 };
 
@@ -482,6 +485,19 @@ function buildPromptWithPhotoFormat(userText, userId) {
     "Selected image format instruction:",
     format.promptSuffix
   ].join("\n");
+}
+
+function getPhotoFormatImageOptions(userId) {
+  const formatKey = getUserPhotoFormat(userId);
+  const format = PHOTO_FORMATS[formatKey];
+
+  if (!format?.size) {
+    return {};
+  }
+
+  return {
+    size: format.size
+  };
 }
 
 function setUserPhotoStyle(userId, styleKey) {
@@ -3734,19 +3750,24 @@ function resetDailyLimits() {
 }
 
 const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4o-mini";
-const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-1.5";
-const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1536";
+
+// Базовая модель для обычной генерации фото
+const OPENAI_IMAGE_MODEL = process.env.OPENAI_IMAGE_MODEL || "gpt-image-2";
+const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
 const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
 const OPENAI_IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
 
+// Первая бесплатная картинка тоже должна идти через gpt-image-2,
+// иначе первая генерация может остаться на gpt-image-1.5
+const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || OPENAI_IMAGE_MODEL;
+const FIRST_IMAGE_SIZE = process.env.FIRST_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
+const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || OPENAI_IMAGE_QUALITY;
 
-const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || "gpt-image-1.5"; // сюда можно поставить нужную модель
-const FIRST_IMAGE_SIZE = process.env.FIRST_IMAGE_SIZE || "1024x1024";
-const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || "low";
-
+// Premium по умолчанию тоже использует gpt-image-2 low,
+// если ты отдельно не задашь другие переменные в ENV
 const PREMIUM_IMAGE_MODEL = process.env.PREMIUM_IMAGE_MODEL || OPENAI_IMAGE_MODEL;
 const PREMIUM_IMAGE_SIZE = process.env.PREMIUM_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
-const PREMIUM_IMAGE_QUALITY = process.env.PREMIUM_IMAGE_QUALITY || "low";
+const PREMIUM_IMAGE_QUALITY = process.env.PREMIUM_IMAGE_QUALITY || OPENAI_IMAGE_QUALITY;
 
 const PRODUCT_CARD_IMAGE_MODEL =
   process.env.PRODUCT_CARD_IMAGE_MODEL || PREMIUM_IMAGE_MODEL;
@@ -9291,6 +9312,10 @@ const prompt = shouldApplyPhotoFormat
     ? buildPromptWithPhotoFormat(rawPrompt, userId)
     : rawPrompt;
 
+  const selectedPhotoFormatOptions = shouldApplyPhotoFormat
+    ? getPhotoFormatImageOptions(userId)
+    : {};
+
   // Берём текущие лимиты пользователя из БД (или памяти)
   const currentCounts = await getUserRequestCounts(userId);
   const userLimits = await getUserDailyLimits(userId);
@@ -9341,13 +9366,13 @@ const prompt = shouldApplyPhotoFormat
         }
       : {};
 
-  const imageOptions =
-    imageOptionsOverride && typeof imageOptionsOverride === "object"
-      ? {
-          ...baseImageOptions,
-          ...imageOptionsOverride
-        }
-      : baseImageOptions;
+const imageOptions = {
+  ...baseImageOptions,
+  ...selectedPhotoFormatOptions,
+  ...(imageOptionsOverride && typeof imageOptionsOverride === "object"
+    ? imageOptionsOverride
+    : {})
+};
 
   const imageBuffer = await runImageOpenAI(() =>
     inputImage
