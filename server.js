@@ -20,7 +20,7 @@ function debugLog(...args) {
   }
 }
 
-const IMAGE_REQUEST_LIMIT = 4; 
+const IMAGE_REQUEST_LIMIT = 3; 
 const CHATGPT_REQUEST_LIMIT = 6;
 const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
 const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
@@ -37,7 +37,7 @@ const YOOKASSA_TAX_SYSTEM_CODE = process.env.YOOKASSA_TAX_SYSTEM_CODE
   ? Number(process.env.YOOKASSA_TAX_SYSTEM_CODE)
   : undefined;
 
-const PREMIUM_IMAGE_REQUEST_LIMIT = Number(process.env.PREMIUM_IMAGE_REQUEST_LIMIT || 20);
+const PREMIUM_IMAGE_REQUEST_LIMIT = Number(process.env.PREMIUM_IMAGE_REQUEST_LIMIT || 15);
 const PREMIUM_CHATGPT_REQUEST_LIMIT = Number(process.env.PREMIUM_CHATGPT_REQUEST_LIMIT || 20);
 // Ежедневный Premium-лимит для «оживить фото / видео по фото».
 // Это НЕ бонусный накопительный кредит: лимит обновляется каждый день.
@@ -46,7 +46,7 @@ const PREMIUM_DURATION_DAYS = Number(process.env.PREMIUM_DURATION_DAYS || 30);
 const PREMIUM_PRICE_RUB = process.env.PREMIUM_PRICE_RUB || "299.00";
 
 const PREMIUM_BONUS_VIDEO_CREDITS = 0; // Premium больше не дает бонусы на «оживить фото / видео по фото».
-const PREMIUM_BONUS_PROMPT_VIDEO_CREDITS = Number(process.env.PREMIUM_BONUS_PROMPT_VIDEO_CREDITS || 2);
+const PREMIUM_BONUS_PROMPT_VIDEO_CREDITS = Number(process.env.PREMIUM_BONUS_PROMPT_VIDEO_CREDITS || 1);
 const PREMIUM_BONUS_PRODUCT_CARD_CREDITS = Number(process.env.PREMIUM_BONUS_PRODUCT_CARD_CREDITS || 1);
 const PREMIUM_BONUS_MUSIC_CREDITS = Number(process.env.PREMIUM_BONUS_MUSIC_CREDITS || 1);
 const PRODUCT_CARD_PRICE_RUB = process.env.PRODUCT_CARD_PRICE_RUB || "79.00";
