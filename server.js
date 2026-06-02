@@ -253,7 +253,7 @@ const MENU_HOROSCOPE_PAYLOAD = "menu_horoscope";
 const MENU_EARN_PAYLOAD = "menu_earn";
 const EARN_WITHDRAW_PAYLOAD = "earn_withdraw";
 const REFERRAL_START_PREFIX = "ref_";
-const REFERRAL_REWARD_KOPECKS = Number(process.env.REFERRAL_REWARD_KOPECKS || 100); // 1 рубль
+const REFERRAL_REWARD_KOPECKS = Number(process.env.REFERRAL_REWARD_KOPECKS || 200); // 2 рубля
 const REFERRAL_MIN_WITHDRAW_KOPECKS = Number(process.env.REFERRAL_MIN_WITHDRAW_KOPECKS || 50000); // 500 рублей
 const REFERRAL_BASE_URL = String(
   process.env.REFERRAL_BASE_URL ||
