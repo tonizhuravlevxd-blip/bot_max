@@ -3757,17 +3757,13 @@ const OPENAI_IMAGE_SIZE = process.env.OPENAI_IMAGE_SIZE || "1024x1024";
 const OPENAI_IMAGE_QUALITY = process.env.OPENAI_IMAGE_QUALITY || "low";
 const OPENAI_IMAGE_OUTPUT_FORMAT = process.env.OPENAI_IMAGE_OUTPUT_FORMAT || "png";
 
-// Первая бесплатная картинка тоже должна идти через gpt-image-2,
-// иначе первая генерация может остаться на gpt-image-1.5
-const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || OPENAI_IMAGE_MODEL;
-const FIRST_IMAGE_SIZE = process.env.FIRST_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
-const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || OPENAI_IMAGE_QUALITY;
+const FIRST_IMAGE_MODEL = process.env.FIRST_IMAGE_MODEL || "gpt-image-1.5";
+const FIRST_IMAGE_SIZE = process.env.FIRST_IMAGE_SIZE || "1024x1536";
+const FIRST_IMAGE_QUALITY = process.env.FIRST_IMAGE_QUALITY || "low";
 
-// Premium по умолчанию тоже использует gpt-image-2 low,
-// если ты отдельно не задашь другие переменные в ENV
-const PREMIUM_IMAGE_MODEL = process.env.PREMIUM_IMAGE_MODEL || OPENAI_IMAGE_MODEL;
-const PREMIUM_IMAGE_SIZE = process.env.PREMIUM_IMAGE_SIZE || OPENAI_IMAGE_SIZE;
-const PREMIUM_IMAGE_QUALITY = process.env.PREMIUM_IMAGE_QUALITY || OPENAI_IMAGE_QUALITY;
+const PREMIUM_IMAGE_MODEL = process.env.PREMIUM_IMAGE_MODEL || "gpt-image-2";
+const PREMIUM_IMAGE_SIZE = process.env.PREMIUM_IMAGE_SIZE || "1024x1024";
+const PREMIUM_IMAGE_QUALITY = process.env.PREMIUM_IMAGE_QUALITY || "low";
 
 const PRODUCT_CARD_IMAGE_MODEL =
   process.env.PRODUCT_CARD_IMAGE_MODEL || PREMIUM_IMAGE_MODEL;
