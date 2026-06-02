@@ -21,7 +21,7 @@ function debugLog(...args) {
 }
 
 const IMAGE_REQUEST_LIMIT = 3; 
-const CHATGPT_REQUEST_LIMIT = 6;
+const CHATGPT_REQUEST_LIMIT = 8;
 const VIDEO_REQUEST_LIMIT = Number(process.env.VIDEO_REQUEST_LIMIT || 5);
 const VIDEO_REQUESTS_BEFORE_SUBSCRIPTION = Number(
   process.env.VIDEO_REQUESTS_BEFORE_SUBSCRIPTION || 1
