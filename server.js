@@ -4264,21 +4264,20 @@ function escapeHtml(value) {
 // --------------------------------------------------
 
 function normalizeReceiptEmail(value) {
-  const email = String(value || "").trim();
-  const fallbackEmail = String(YOOKASSA_RECEIPT_EMAIL || "").trim();
+  const email = String(value || "")
+    .trim()
+    .toLowerCase();
 
-  // Если пользователь ввёл нормальный email — используем его
-  if (email && email.includes("@")) {
-    return email;
+  if (!email || email.length > 254) {
+    return "";
   }
 
-  // Если email пустой или некорректный — используем резервный
-  if (fallbackEmail && fallbackEmail.includes("@")) {
-    return fallbackEmail;
+  // Достаточно строгая проверка для обычных email.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+    return "";
   }
 
-  // Если вообще ничего нет — тогда уже вернём пустую строку
-  return "";
+  return email;
 }
 
 function getPaymentUserIdFromRequest(req) {
