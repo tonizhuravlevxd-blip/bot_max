@@ -4,6 +4,9 @@ import crypto from "crypto";
 import { fal } from "@fal-ai/client";
 import { buildHoroscopeFromEngine } from "./horoscopeEngine.js";
 
+const app = express();
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: false }));
 
 const PORT = process.env.PORT || 10000;
 const MAX_BOT_TOKEN = process.env.MAX_BOT_TOKEN;
@@ -4146,20 +4149,16 @@ function escapeHtml(value) {
 // --------------------------------------------------
 
 function normalizeReceiptEmail(value) {
-  const email = String(value || "")
-    .trim()
-    .toLowerCase();
+  const email = String(value || "").trim();
 
-  if (!email || email.length > 254) {
-    return "";
-  }
+  // Если поле пустое — вернём пустую строку, чтобы показать пользователю ошибку "Введите e-mail"
+  if (!email) return "";
 
-  // Достаточно строгая проверка для обычных email.
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
-    return "";
-  }
+  // Если в тексте есть символ @ — используем его напрямую
+  if (email.includes("@")) return email;
 
-  return email;
+  // Если нет @ — используем резервный e-mail
+  return YOOKASSA_RECEIPT_EMAIL;
 }
 
 function getPaymentUserIdFromRequest(req) {
@@ -4351,6 +4350,7 @@ function renderReceiptEmailForm(res, {
                 type="email"
                 placeholder="example@mail.ru"
                 autocomplete="email"
+                required
               >
 
               <button type="submit">Перейти к оплате</button>
