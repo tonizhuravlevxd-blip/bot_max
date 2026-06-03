@@ -4147,18 +4147,13 @@ function escapeHtml(value) {
 // --------------------------------------------------
 // Мягкая нормализация e-mail с резервным e-mail
 // --------------------------------------------------
-const YOOKASSA_RECEIPT_EMAIL = "toni.zhuravlev.xd@mail.ru";
 
 function normalizeReceiptEmail(value) {
   const email = String(value || "").trim().toLowerCase();
 
-  // если пустая строка, возвращаем резервный e-mail
-  if (!email) return YOOKASSA_RECEIPT_EMAIL;
-
-  // если есть @, возвращаем введённый
+  if (!email) return YOOKASSA_RECEIPT_EMAIL; // используем уже объявленную переменную
   if (email.includes("@")) return email;
 
-  // если нет @ — возвращаем резервный
   return YOOKASSA_RECEIPT_EMAIL;
 }
 
