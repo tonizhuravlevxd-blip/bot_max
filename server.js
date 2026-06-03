@@ -4150,15 +4150,20 @@ function escapeHtml(value) {
 
 function normalizeReceiptEmail(value) {
   const email = String(value || "").trim();
+  const fallbackEmail = String(YOOKASSA_RECEIPT_EMAIL || "").trim();
 
-  // Если поле пустое — вернём пустую строку, чтобы показать пользователю ошибку "Введите e-mail"
-  if (!email) return "";
+  // Если пользователь ввёл нормальный email — используем его
+  if (email && email.includes("@")) {
+    return email;
+  }
 
-  // Если в тексте есть символ @ — используем его напрямую
-  if (email.includes("@")) return email;
+  // Если email пустой или некорректный — используем резервный
+  if (fallbackEmail && fallbackEmail.includes("@")) {
+    return fallbackEmail;
+  }
 
-  // Если нет @ — используем резервный e-mail
-  return YOOKASSA_RECEIPT_EMAIL;
+  // Если вообще ничего нет — тогда уже вернём пустую строку
+  return "";
 }
 
 function getPaymentUserIdFromRequest(req) {
@@ -4350,7 +4355,6 @@ function renderReceiptEmailForm(res, {
                 type="email"
                 placeholder="example@mail.ru"
                 autocomplete="email"
-                required
               >
 
               <button type="submit">Перейти к оплате</button>
