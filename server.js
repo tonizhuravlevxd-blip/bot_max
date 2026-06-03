@@ -4144,21 +4144,22 @@ function escapeHtml(value) {
     .replace(/'/g, "&#039;");
 }
 
+// --------------------------------------------------
+// Мягкая нормализация e-mail с резервным e-mail
+// --------------------------------------------------
+const YOOKASSA_RECEIPT_EMAIL = "toni.zhuravlev.xd@mail.ru";
+
 function normalizeReceiptEmail(value) {
-  const email = String(value || "")
-    .trim()
-    .toLowerCase();
+  const email = String(value || "").trim().toLowerCase();
 
-  if (!email || email.length > 254) {
-    return "";
-  }
+  // если пустая строка, возвращаем резервный e-mail
+  if (!email) return YOOKASSA_RECEIPT_EMAIL;
 
-  // Достаточно строгая проверка для обычных email.
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
-    return "";
-  }
+  // если есть @, возвращаем введённый
+  if (email.includes("@")) return email;
 
-  return email;
+  // если нет @ — возвращаем резервный
+  return YOOKASSA_RECEIPT_EMAIL;
 }
 
 function getPaymentUserIdFromRequest(req) {
