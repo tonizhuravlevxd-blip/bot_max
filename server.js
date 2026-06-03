@@ -4149,7 +4149,7 @@ function escapeHtml(value) {
 // --------------------------------------------------
 
 function normalizeReceiptEmail(value) {
-  const email = String(value || "").trim().toLowerCase();
+  const email = String(value || "").trim();
 
   // Если поле пустое — вернём пустую строку, чтобы показать пользователю ошибку "Введите e-mail"
   if (!email) return "";
