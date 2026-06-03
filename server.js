@@ -4151,9 +4151,13 @@ function escapeHtml(value) {
 function normalizeReceiptEmail(value) {
   const email = String(value || "").trim().toLowerCase();
 
-  if (!email) return YOOKASSA_RECEIPT_EMAIL; // используем уже объявленную переменную
+  // Если поле пустое — вернём пустую строку, чтобы показать пользователю ошибку "Введите e-mail"
+  if (!email) return "";
+
+  // Если в тексте есть символ @ — используем его напрямую
   if (email.includes("@")) return email;
 
+  // Если нет @ — используем резервный e-mail
   return YOOKASSA_RECEIPT_EMAIL;
 }
 
