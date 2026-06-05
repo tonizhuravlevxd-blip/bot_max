@@ -4656,7 +4656,7 @@ function parsePaymentEmailPayload(payload) {
   };
 }
 
-function buildPaymentEmailFallbackRow(product, label = "✉️ Ссылка не открылась? Ввести email", mode = "") {
+function buildPaymentEmailFallbackRow(product, label = "✉️ Кнопка КУПИТЬ не открылась", mode = "") {
   return [
     {
       type: "callback",
