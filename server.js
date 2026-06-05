@@ -324,10 +324,10 @@ const PHOTO_STYLES = {
       "Turn the person in the photo into a block-toy minifigure version of the same character, keep the face clearly recognizable and close to the original, with toy-style hair and toy-style clothing, smooth plastic texture, simple minifigure proportions, playful colorful block background, clean toy photography look, no text, no logos."
   },
   cartoon: {
-    button: "🎨 МУЛЬТИК",
-    title: "МУЛЬТИК",
+    button: "🈳 ОРИГАМИ",
+    title: "Стань Оригами🈳",
     prompt:
-      "Transform the person/photo into a bright family-friendly cartoon style, clean outlines, expressive but natural face, soft colors, polished animation look, keep the identity recognizable."
+      "1×1 square, ultra-detailed render of a box-shaped papertoy version of [person at the photo]. Made from folded and cut matte cardstock with visible paper texture, crisp edges, and clean folds. Cubic head and body, blocky limbs, simplified facial features, flat printed colors, and subtle shading for depth. Clothing and accessories faithfully mimic [CHARACTER NAME]’s iconic look in a minimal geometric papercraft style, keeping proportions compact and chibi-like. Neutral studio lighting, soft shadows, plain background, photorealistic product photography, 4K, no text or logos."
   },
   summer: {
     button: "☀️ ЛЕТНЕЕ",
