@@ -7672,12 +7672,19 @@ async function getReferralStats(userId) {
   };
 }
 
-async function sendEarnMenu(target, userId, username = "") {
+async function sendEarnMenu(target, userId, firstName = "") {
   const stats = await getReferralStats(userId);
   const referralLink = buildReferralLink(userId);
   const monthLabel = stats.monthKey ? `${stats.monthKey}` : "текущий месяц";
-  const cleanUsername = String(username || "").trim().replace(/^@+/, "");
-  const profileLabel = cleanUsername ? `@${cleanUsername}` : "не указан";
+
+  const cleanFirstName = String(firstName || "")
+    .replace(/[\r\n,*_`[\]()~>#+=|{}]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .split(/\s+/)[0]
+    .slice(0, 50);
+
+  const profileName = cleanFirstName || "не указано";
 
   const text = [
     "💰 **Заработать на приглашениях**",
@@ -7690,7 +7697,7 @@ async function sendEarnMenu(target, userId, username = "") {
     "• нажимает кнопки;",
     "• создаёт фото, видео, музыку, или пользуется другими функциями.",
     "",
-    `**👤 Профиль:** ${profileLabel}`,
+    `**👤 Профиль:** ${profileName}`,
     `**💷Баланс за ${monthLabel}:** ${formatKopecksRub(stats.balanceKopecks)}₽`,
     `**🤾‍♀️Активных приглашённых:** ${stats.activeThisMonth}`,
     `**🗂️Всего пришло по ссылке:** ${stats.invitedTotal}`,
@@ -11987,7 +11994,7 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         clearFamilyVideoDraft(userId);
         clearHoroscopeSetupState(userId);
 
-        await sendEarnMenu(target, userId, getUserUsername(update));
+        await sendEarnMenu(target, userId, getUserFirstName(update));
         return;
       }
 
@@ -12010,7 +12017,7 @@ if (callbackPayload === MENU_CREATE_VIDEO_PAYLOAD) {
         clearFamilyVideoDraft(userId);
         clearHoroscopeSetupState(userId);
 
-        await sendEarnMenu(target, userId, getUserUsername(update));
+        await sendEarnMenu(target, userId, getUserFirstName(update));
         return;
       }
 
