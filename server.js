@@ -7690,7 +7690,7 @@ async function sendEarnMenu(target, userId, username = "") {
     "• нажимает кнопки;",
     "• создаёт фото, видео, музыку, или пользуется другими функциями.",
     "",
-    `**👤 Профиль:** ${namePrefix}`,
+    `**👤 Профиль:** ${profileLabel}`,
     `**💷Баланс за ${monthLabel}:** ${formatKopecksRub(stats.balanceKopecks)}₽`,
     `**🤾‍♀️Активных приглашённых:** ${stats.activeThisMonth}`,
     `**🗂️Всего пришло по ссылке:** ${stats.invitedTotal}`,
