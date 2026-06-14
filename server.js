@@ -277,6 +277,7 @@ const MENU_PRODUCT_CARD_PAYLOAD = "menu_product_card";
 const MENU_HOROSCOPE_PAYLOAD = "menu_horoscope";
 const MENU_EARN_PAYLOAD = "menu_earn";
 const EARN_WITHDRAW_PAYLOAD = "earn_withdraw";
+const EARN_START_PAYLOAD = "earn";
 const REFERRAL_START_PREFIX = "ref_";
 const REFERRAL_REWARD_KOPECKS = Number(process.env.REFERRAL_REWARD_KOPECKS || 500); // 5 рублей
 const REFERRAL_MIN_WITHDRAW_KOPECKS = Number(process.env.REFERRAL_MIN_WITHDRAW_KOPECKS || 50000); // 500 рублей
@@ -11673,24 +11674,35 @@ if (shouldRegisterBotUser(broadcastUserId)) {
 }
 
   try {
-    if (updateType === "bot_started") {
-      const firstName = getUserFirstName(update);
-      const namePrefix = firstName ? `, ${firstName}!` : "!";
+if (updateType === "bot_started") {
+  const firstName = getUserFirstName(update);
+  const namePrefix = firstName ? `, ${firstName}!` : "!";
 
-      const startPayload = getStartPayload(update);
-      await handleReferralStart(userId, startPayload).catch((error) => {
-        console.warn("Failed to save referral start:", error?.message || error);
-      });
+  const startPayload = getStartPayload(update);
 
-      const text =
-        `🙋🏻‍♂️ **Привет${namePrefix}**\n\n` +
-        "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/8Z6BsYfupgMq1Q) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
-        "Напишите вопрос прямо в **ЧАТ**✍ или выберите, что хотите сделать ниже:";
+  await handleReferralStart(userId, startPayload).catch((error) => {
+    console.warn("Failed to save referral start:", error?.message || error);
+  });
 
-      await sendMainMenu(target, text);
+  // Если человек пришёл по ссылке ?start=earn,
+  // сразу показываем раздел «Заработать»
+  if (String(startPayload || "").trim() === EARN_START_PAYLOAD) {
+    clearUserImageMode(userId);
+    clearFamilyVideoDraft(userId);
+    clearHoroscopeSetupState(userId);
 
-      return;
-    }
+    await sendEarnMenu(target, userId);
+    return;
+  }
+
+  const text =
+    `🙋🏻‍♂️ **Привет${namePrefix}**\n\n` +
+    "Осуществляя работу с сервисом с помощью **Max-бота**, вы подтверждаете, что ознакомлены и согласны с [Офертой](https://disk.yandex.ru/i/8Z6BsYfupgMq1Q) и [Политикой персональных данных](https://disk.yandex.ru/i/LHakrABNtGiVMw).\n\n" +
+    "Напишите вопрос прямо в **ЧАТ**✍ или выберите, что хотите сделать ниже:";
+
+  await sendMainMenu(target, text);
+  return;
+}
     const userText = getIncomingText(update);
     const callbackPayload = getCallbackPayload(update);
     const callbackId = getCallbackId(update);
