@@ -5354,7 +5354,7 @@ function getPhotoStyleImageOptions(styleKey) {
 }
 
 const OPENAI_API_BASE = process.env.OPENAI_API_BASE || "https://api.openai.com/v1";
-const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api.max.ru";
+const MAX_API_BASE = process.env.MAX_API_BASE || "https://platform-api2.max.ru";
 const MAX_WEBHOOK_SECRET = process.env.MAX_WEBHOOK_SECRET || "";
 const MAX_ATTACHMENT_RETRIES = Number(process.env.MAX_ATTACHMENT_RETRIES || 5);
 const MAX_INPUT_IMAGE_BYTES = Number(process.env.MAX_INPUT_IMAGE_BYTES || 20 * 1024 * 1024);
